@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+mod backup;
 mod config;
 mod deeplink;
 mod env;
@@ -12,6 +13,7 @@ mod provider;
 mod settings;
 pub mod skill;
 
+pub use backup::*;
 pub use config::*;
 pub use deeplink::*;
 pub use env::*;

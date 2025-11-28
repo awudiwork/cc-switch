@@ -464,6 +464,15 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let settings = crate::settings::get_settings();
 
+                // 窗口关闭时创建备份
+                if let Some(app_state) = window.app_handle().try_state::<AppState>() {
+                    if let Ok(Some(backup_path)) = app_state.db.backup_database_file() {
+                        if let Some(backup_id) = backup_path.file_stem().and_then(|s| s.to_str()) {
+                            log::info!("✓ Database backed up on window close: {}", backup_id);
+                        }
+                    }
+                }
+
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
                     let _ = window.hide();
@@ -907,6 +916,8 @@ pub fn run() {
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
+            // Backup
+            commands::get_backup_info,
         ]);
 
     let app = builder

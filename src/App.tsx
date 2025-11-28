@@ -39,6 +39,7 @@ import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
+import { BackupStatus } from "@/components/BackupStatus";
 import { Button } from "@/components/ui/button";
 
 type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
@@ -414,6 +415,7 @@ function App() {
                   >
                     <Settings className="h-4 w-4" />
                   </Button>
+                  <BackupStatus />
                 </div>
                 <UpdateBadge onClick={() => setCurrentView("settings")} />
               </>
