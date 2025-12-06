@@ -75,6 +75,7 @@ function App() {
     switchProvider,
     deleteProvider,
     saveUsageScript,
+    setProxyTarget,
   } = useProviderActions(activeApp);
 
   // 监听来自托盘菜单的切换事件
@@ -304,20 +305,26 @@ function App() {
         return <AgentsPanel onOpenChange={() => setCurrentView("providers")} />;
       default:
         return (
-          <div className="mx-auto max-w-[56rem] px-6 space-y-4">
-            <ProviderList
-              providers={providers}
-              currentProviderId={currentProviderId}
-              appId={activeApp}
-              isLoading={isLoading}
-              onSwitch={switchProvider}
-              onEdit={setEditingProvider}
-              onDelete={setConfirmDelete}
-              onDuplicate={handleDuplicateProvider}
-              onConfigureUsage={setUsageProvider}
-              onOpenWebsite={handleOpenWebsite}
-              onCreate={() => setIsAddOpen(true)}
-            />
+          <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+            {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
+              <div className="space-y-4">
+                <ProviderList
+                  providers={providers}
+                  currentProviderId={currentProviderId}
+                  appId={activeApp}
+                  isLoading={isLoading}
+                  onSwitch={switchProvider}
+                  onSetProxyTarget={setProxyTarget}
+                  onEdit={setEditingProvider}
+                  onDelete={setConfirmDelete}
+                  onDuplicate={handleDuplicateProvider}
+                  onConfigureUsage={setUsageProvider}
+                  onOpenWebsite={handleOpenWebsite}
+                  onCreate={() => setIsAddOpen(true)}
+                />
+              </div>
+            </div>
           </div>
         );
     }

@@ -71,7 +71,6 @@
 }
 
 /* Glassmorphism Utilities */
-/* Glassmorphism Utilities */
 .glass {
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(10px);
@@ -104,6 +103,19 @@
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
+/* 供应商卡片选中状态 */
+.glass-card-active {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+.dark .glass-card-active {
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.2);
+}
+
 .glass-header {
   background: hsl(var(--background));
   backdrop-filter: none;
@@ -131,6 +143,8 @@
 /* 全局基础样式 */
 * {
   box-sizing: border-box;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ */
 }
 
 html {
@@ -156,16 +170,6 @@ html.dark {
 /* 滚动条样式 - 完全隐藏（支持所有浏览器） */
 ::-webkit-scrollbar {
   display: none;
-}
-
-/* Firefox */
-* {
-  scrollbar-width: none;
-}
-
-/* IE 10+ */
-* {
-  -ms-overflow-style: none;
 }
 
 /* 焦点样式 */
