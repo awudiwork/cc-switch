@@ -87,10 +87,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.5-air",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.6",
+        ANTHROPIC_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.7",
       },
     },
     category: "cn_official",
@@ -107,10 +107,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.5-air",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.6",
+        ANTHROPIC_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.7",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-4.7",
       },
     },
     category: "cn_official",
@@ -178,13 +178,15 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api-inference.modelscope.cn",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "ZhipuAI/GLM-4.6",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-4.6",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-4.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-4.6",
+        ANTHROPIC_MODEL: "ZhipuAI/GLM-4.7",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-4.7",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-4.7",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-4.7",
       },
     },
     category: "aggregator",
+    icon: "modelscope",
+    iconColor: "#624AFF",
   },
   {
     name: "KAT-Coder",
@@ -228,6 +230,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    icon: "longcat",
+    iconColor: "#29E154",
   },
   {
     name: "MiniMax",
@@ -239,10 +243,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
-        ANTHROPIC_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2",
+        ANTHROPIC_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2.1",
       },
     },
     category: "cn_official",
@@ -265,10 +269,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
-        ANTHROPIC_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2",
+        ANTHROPIC_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M2.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M2.1",
       },
     },
     category: "cn_official",
@@ -330,6 +334,8 @@ export const providerPresets: ProviderPreset[] = [
     // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
     endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
     category: "aggregator",
+    icon: "aihubmix",
+    iconColor: "#006FFB",
   },
   {
     name: "DMXAPI",
@@ -344,6 +350,8 @@ export const providerPresets: ProviderPreset[] = [
     // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
     endpointCandidates: ["https://www.dmxapi.cn", "https://api.dmxapi.cn"],
     category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "dmxapi", // 促销信息 i18n key
   },
   {
     name: "PackyCode",
@@ -366,6 +374,26 @@ export const providerPresets: ProviderPreset[] = [
     icon: "packycode",
   },
   {
+    name: "AiGoCode",
+    websiteUrl: "https://aigocode.com",
+    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aigocode.com/api",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    // 请求地址候选（用于地址管理/测速）
+    endpointCandidates: [
+      "https://api.aigocode.com",
+    ],
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aigocode", // 促销信息 i18n key
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -381,6 +409,6 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     icon: "openrouter",
-    iconColor: "#6366F1",
+    iconColor: "#6566F1",
   },
 ];

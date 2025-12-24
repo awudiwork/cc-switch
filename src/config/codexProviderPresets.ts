@@ -40,7 +40,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5.1-codex",
+  modelName = "gpt-5.1-codex"
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -80,12 +80,12 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "Azure OpenAI",
     websiteUrl:
-      "https://learn.microsoft.com/azure/ai-services/openai/how-to/overview",
+      "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
     category: "third_party",
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "azure"
-model = "gpt-5.1-codex"
+model = "gpt-5.2"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -113,7 +113,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aihubmix",
       "https://aihubmix.com/v1",
-      "gpt-5.1-codex",
+      "gpt-5.2"
     ),
     endpointCandidates: [
       "https://aihubmix.com/v1",
@@ -128,9 +128,11 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "dmxapi",
       "https://www.dmxapi.cn/v1",
-      "gpt-5.1-codex",
+      "gpt-5.2"
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "dmxapi", // 促销信息 i18n key
   },
   {
     name: "PackyCode",
@@ -141,7 +143,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "packycode",
       "https://www.packyapi.com/v1",
-      "gpt-5.1-codex",
+      "gpt-5.2"
     ),
     endpointCandidates: [
       "https://www.packyapi.com/v1",
@@ -150,5 +152,18 @@ requires_openai_auth = true`,
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
     icon: "packycode",
+  },
+  {
+    name: "AiGoCode",
+    websiteUrl: "https://aigocode.com",
+    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig("aigocode", "https://api.aigocode.com/openai", "gpt-5.2"),
+    endpointCandidates: ["https://api.aigocode.com"],
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aigocode", // 促销信息 i18n key
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
   },
 ];

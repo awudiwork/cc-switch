@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
@@ -44,8 +45,14 @@ import { Button } from "@/components/ui/button";
 
 type View = "providers" | "settings" | "prompts" | "skills" | "mcp" | "agents";
 
+// 顶部拖拽区域和 header 的高度常量
+const DRAG_BAR_HEIGHT = 28; // px
+const HEADER_HEIGHT = 64; // px
+const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
+
 function App() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>("claude");
   const [currentView, setCurrentView] = useState<View>("providers");
@@ -260,7 +267,20 @@ function App() {
 
   // 导入配置成功后刷新
   const handleImportSuccess = async () => {
-    await refetch();
+    try {
+      // 导入会影响所有应用的供应商数据：刷新所有 providers 缓存
+      await queryClient.invalidateQueries({
+        queryKey: ["providers"],
+        refetchType: "all",
+      });
+      await queryClient.refetchQueries({
+        queryKey: ["providers"],
+        type: "all",
+      });
+    } catch (error) {
+      console.error("[App] Failed to refresh providers after import", error);
+      await refetch();
+    }
     try {
       await providersApi.updateTrayMenu();
     } catch (error) {
@@ -333,7 +353,7 @@ function App() {
   return (
     <div
       className="flex min-h-screen flex-col bg-background text-foreground selection:bg-primary/30"
-      style={{ overflowX: "hidden" }}
+      style={{ overflowX: "hidden", paddingTop: CONTENT_TOP_OFFSET }}
     >
       {/* 全局拖拽区域（顶部 4px），避免上边框无法拖动 */}
       <div
@@ -430,14 +450,14 @@ function App() {
           </div>
 
           <div
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 h-[32px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
             {currentView === "prompts" && (
               <Button
                 size="icon"
                 onClick={() => promptPanelRef.current?.openAdd()}
-                className={addActionButtonClass}
+                className={`ml-auto ${addActionButtonClass}`}
                 title={t("prompts.add")}
               >
                 <Plus className="h-5 w-5" />
@@ -447,7 +467,7 @@ function App() {
               <Button
                 size="icon"
                 onClick={() => mcpPanelRef.current?.openAdd()}
-                className={addActionButtonClass}
+                className={`ml-auto ${addActionButtonClass}`}
                 title={t("mcp.unifiedPanel.addServer")}
               >
                 <Plus className="h-5 w-5" />
@@ -540,13 +560,10 @@ function App() {
         </div>
       </header>
 
-      <main
-        className={`flex-1 overflow-y-auto pb-12 animate-fade-in scroll-overlay ${
-          currentView === "providers" ? "pt-24" : "pt-20"
-        }`}
-        style={{ overflowX: "hidden" }}
-      >
-        {renderContent()}
+      <main className="flex-1 pb-12 animate-fade-in ">
+        <div className="pb-12">
+          {renderContent()}
+        </div>
       </main>
 
       <AddProviderDialog
