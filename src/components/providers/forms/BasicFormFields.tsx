@@ -51,8 +51,16 @@ export function BasicFormFields({ form }: BasicFormFieldsProps) {
           <DialogTrigger asChild>
             <button
               type="button"
-              className="w-20 h-20 p-3 rounded-xl border-2 border-gray-300 dark:border-gray-600 hover:border-primary dark:hover:border-primary transition-colors cursor-pointer bg-gray-50 dark:bg-gray-800/50 flex items-center justify-center"
-              title={currentIcon ? "点击更换图标" : "点击选择图标"}
+              className="w-20 h-20 p-3 rounded-xl border-2 border-muted hover:border-primary transition-colors cursor-pointer bg-muted/30 hover:bg-muted/50 flex items-center justify-center"
+              title={
+                currentIcon
+                  ? t("providerIcon.clickToChange", {
+                      defaultValue: "点击更换图标",
+                    })
+                  : t("providerIcon.clickToSelect", {
+                      defaultValue: "点击选择图标",
+                    })
+              }
             >
               <ProviderIcon
                 icon={currentIcon}
@@ -145,7 +153,10 @@ export function BasicFormFields({ form }: BasicFormFieldsProps) {
           <FormItem>
             <FormLabel>{t("provider.websiteUrl")}</FormLabel>
             <FormControl>
-              <Input {...field} placeholder="https://" />
+              <Input
+                {...field}
+                placeholder={t("providerForm.websiteUrlPlaceholder")}
+              />
             </FormControl>
             <FormMessage />
           </FormItem>

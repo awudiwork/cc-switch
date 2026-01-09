@@ -40,7 +40,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5.1-codex"
+  modelName = "gpt-5.1-codex",
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -113,7 +113,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aihubmix",
       "https://aihubmix.com/v1",
-      "gpt-5.2"
+      "gpt-5.2",
     ),
     endpointCandidates: [
       "https://aihubmix.com/v1",
@@ -128,7 +128,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "dmxapi",
       "https://www.dmxapi.cn/v1",
-      "gpt-5.2"
+      "gpt-5.2",
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
     isPartner: true, // 合作伙伴
@@ -143,7 +143,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "packycode",
       "https://www.packyapi.com/v1",
-      "gpt-5.2"
+      "gpt-5.2",
     ),
     endpointCandidates: [
       "https://www.packyapi.com/v1",
@@ -154,16 +154,39 @@ requires_openai_auth = true`,
     icon: "packycode",
   },
   {
-    name: "AiGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
-    category: "third_party",
+    name: "Cubence",
+    websiteUrl: "https://cubence.com",
+    apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("aigocode", "https://api.aigocode.com/openai", "gpt-5.2"),
-    endpointCandidates: ["https://api.aigocode.com"],
+    config: generateThirdPartyConfig(
+      "cubence",
+      "https://api.cubence.com/v1",
+      "gpt-5.2",
+    ),
+    endpointCandidates: [
+      "https://api.cubence.com/v1",
+      "https://api-cf.cubence.com/v1",
+      "https://api-dmit.cubence.com/v1",
+      "https://api-bwg.cubence.com/v1",
+    ],
+    category: "third_party",
     isPartner: true, // 合作伙伴
-    partnerPromotionKey: "aigocode", // 促销信息 i18n key
-    icon: "aigocode",
-    iconColor: "#5B7FFF",
+    partnerPromotionKey: "cubence", // 促销信息 i18n key  
+    icon: "cubence",
+    iconColor: "#000000",
   },
+  {
+    name: "OpenRouter",
+    websiteUrl: "https://openrouter.ai",
+    apiKeyUrl: "https://openrouter.ai/keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "openrouter",
+      "https://openrouter.ai/api/v1",
+      "gpt-5.2",
+    ),
+    category: "aggregator",
+    icon: "openrouter",
+    iconColor: "#6566F1",
+  },  
 ];

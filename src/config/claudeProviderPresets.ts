@@ -124,8 +124,7 @@ export const providerPresets: ProviderPreset[] = [
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL:
-          "https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy",
+        ANTHROPIC_BASE_URL: "https://dashscope.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "qwen3-max",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3-max",
@@ -374,24 +373,26 @@ export const providerPresets: ProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "AiGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    name: "Cubence",
+    websiteUrl: "https://cubence.com",
+    apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aigocode.com/api",
+        ANTHROPIC_BASE_URL: "https://api.cubence.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    // 请求地址候选（用于地址管理/测速）
     endpointCandidates: [
-      "https://api.aigocode.com",
+      "https://api.cubence.com",
+      "https://api-cf.cubence.com",
+      "https://api-dmit.cubence.com",
+      "https://api-bwg.cubence.com",
     ],
     category: "third_party",
     isPartner: true, // 合作伙伴
-    partnerPromotionKey: "aigocode", // 促销信息 i18n key
-    icon: "aigocode",
-    iconColor: "#5B7FFF",
+    partnerPromotionKey: "cubence", // 促销信息 i18n key
+    icon: "cubence",
+    iconColor: "#000000",
   },
   {
     name: "OpenRouter",
@@ -410,5 +411,23 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "Xiaomi MiMo",
+    websiteUrl: "https://platform.xiaomimimo.com",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.xiaomimimo.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "mimo-v2-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2-flash",
+      },
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
   },
 ];

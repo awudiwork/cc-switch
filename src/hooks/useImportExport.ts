@@ -108,6 +108,7 @@ export function useImportExport(
           t("settings.importSuccess", {
             defaultValue: "配置导入成功",
           }),
+          { closeButton: true },
         );
       } else {
         console.error(
@@ -161,6 +162,7 @@ export function useImportExport(
           t("settings.configExported", {
             defaultValue: "配置已导出",
           }) + `\n${displayPath}`,
+          { closeButton: true },
         );
       } else {
         toast.error(

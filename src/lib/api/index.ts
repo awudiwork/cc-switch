@@ -1,10 +1,11 @@
 export type { AppId } from "./types";
-export { providersApi } from "./providers";
+export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";
 export { mcpApi } from "./mcp";
 export { promptsApi } from "./prompts";
 export { usageApi } from "./usage";
 export { vscodeApi } from "./vscode";
+export { proxyApi } from "./proxy";
 export { backupApi } from "./backup";
 export * as configApi from "./config";
 export type { ProviderSwitchEvent } from "./providers";

@@ -2,13 +2,6 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
-  aigocode: {
-    name: "aigocode",
-    displayName: "AiGoCode",
-    category: "ai-provider",
-    keywords: ["aigocode", "aigo", "code", "third-party"],
-    defaultColor: "#5B7FFF",
-  },
   alibaba: {
     name: "alibaba",
     displayName: "Alibaba",
@@ -85,6 +78,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "other",
     keywords: [],
     defaultColor: "currentColor",
+  },
+  cubence: {
+    name: "cubence",
+    displayName: "Cubence",
+    category: "ai-provider",
+    keywords: ["cubence", "api", "relay"],
+    defaultColor: "#4B5563",
   },
   deepseek: {
     name: "deepseek",
@@ -205,6 +205,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["mistral"],
     defaultColor: "#FF7000",
   },
+  newapi: {
+    name: "newapi",
+    displayName: "newapi",
+    category: "other",
+    keywords: [],
+    defaultColor: "currentColor",
+  },
   notion: {
     name: "notion",
     displayName: "notion",
@@ -224,7 +231,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "OpenAI",
     category: "ai-provider",
     keywords: ["gpt", "chatgpt"],
-    defaultColor: "#00A67E",
+    defaultColor: "currentColor",
   },
   packycode: {
     name: "packycode",
@@ -337,6 +344,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["aihubmix", "hub", "mix", "aggregator"],
     defaultColor: "#006FFB",
+  },
+  xiaomimimo: {
+    name: "xiaomimimo",
+    displayName: "Xiaomi MiMo",
+    category: "ai-provider",
+    keywords: ["xiaomimimo", "xiaomi", "mimo"],
+    defaultColor: "#000000",
   },
 };
 

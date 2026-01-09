@@ -23,7 +23,7 @@ import type { LogFilters } from "@/types/usage";
 import { ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 
 export function RequestLogTable() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
 
   // 默认时间范围：过去24小时
@@ -62,126 +62,177 @@ export function RequestLogTable() {
     });
   };
 
+  // 将 Unix 时间戳转换为本地时间的 datetime-local 格式
+  const timestampToLocalDatetime = (timestamp: number): string => {
+    const date = new Date(timestamp * 1000);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
+  // 将 datetime-local 格式转换为 Unix 时间戳
+  const localDatetimeToTimestamp = (datetime: string): number | undefined => {
+    if (!datetime) return undefined;
+    // 验证格式是否完整 (YYYY-MM-DDTHH:mm)
+    if (datetime.length < 16) return undefined;
+    const timestamp = new Date(datetime).getTime();
+    // 验证是否为有效日期
+    if (isNaN(timestamp)) return undefined;
+    return Math.floor(timestamp / 1000);
+  };
+
+  const dateLocale =
+    i18n.language === "zh"
+      ? "zh-CN"
+      : i18n.language === "ja"
+        ? "ja-JP"
+        : "en-US";
+
   return (
     <div className="space-y-4">
       {/* 筛选栏 */}
-      <div className="flex flex-wrap items-center gap-2 rounded-md bg-card/60 p-3 shadow-sm">
-        <Select
-          value={tempFilters.appType || "all"}
-          onValueChange={(v) =>
-            setTempFilters({
-              ...tempFilters,
-              appType: v === "all" ? undefined : v,
-            })
-          }
-        >
-          <SelectTrigger className="w-[120px]">
-            <SelectValue placeholder={t("usage.endpoint", "端点")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t("common.all", "全部")}</SelectItem>
-            <SelectItem value="claude">Claude</SelectItem>
-            <SelectItem value="codex">Codex</SelectItem>
-            <SelectItem value="gemini">Gemini</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex flex-col gap-4 rounded-lg border bg-card/50 p-4 backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <Select
+            value={tempFilters.appType || "all"}
+            onValueChange={(v) =>
+              setTempFilters({
+                ...tempFilters,
+                appType: v === "all" ? undefined : v,
+              })
+            }
+          >
+            <SelectTrigger className="w-[130px] bg-background">
+              <SelectValue placeholder={t("usage.appType")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("usage.allApps")}</SelectItem>
+              <SelectItem value="claude">Claude</SelectItem>
+              <SelectItem value="codex">Codex</SelectItem>
+              <SelectItem value="gemini">Gemini</SelectItem>
+            </SelectContent>
+          </Select>
 
-        <Select
-          value={tempFilters.statusCode?.toString() || "all"}
-          onValueChange={(v) =>
-            setTempFilters({
-              ...tempFilters,
-              statusCode: v === "all" ? undefined : parseInt(v),
-            })
-          }
-        >
-          <SelectTrigger className="w-[120px]">
-            <SelectValue placeholder={t("usage.status", "状态码")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t("common.all", "全部")}</SelectItem>
-            <SelectItem value="200">200</SelectItem>
-            <SelectItem value="400">400</SelectItem>
-            <SelectItem value="401">401</SelectItem>
-            <SelectItem value="429">429</SelectItem>
-            <SelectItem value="500">500</SelectItem>
-          </SelectContent>
-        </Select>
+          <Select
+            value={tempFilters.statusCode?.toString() || "all"}
+            onValueChange={(v) =>
+              setTempFilters({
+                ...tempFilters,
+                statusCode: v === "all" ? undefined : parseInt(v),
+              })
+            }
+          >
+            <SelectTrigger className="w-[130px] bg-background">
+              <SelectValue placeholder={t("usage.statusCode")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("common.all")}</SelectItem>
+              <SelectItem value="200">200 OK</SelectItem>
+              <SelectItem value="400">400 Bad Request</SelectItem>
+              <SelectItem value="401">401 Unauthorized</SelectItem>
+              <SelectItem value="429">429 Rate Limit</SelectItem>
+              <SelectItem value="500">500 Server Error</SelectItem>
+            </SelectContent>
+          </Select>
 
-        <Input
-          placeholder={t("usage.provider", "供应商名称")}
-          className="w-[140px]"
-          value={tempFilters.providerName || ""}
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              providerName: e.target.value || undefined,
-            })
-          }
-        />
+          <div className="flex items-center gap-2 flex-1 min-w-[300px]">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={t("usage.searchProviderPlaceholder")}
+                className="pl-9 bg-background"
+                value={tempFilters.providerName || ""}
+                onChange={(e) =>
+                  setTempFilters({
+                    ...tempFilters,
+                    providerName: e.target.value || undefined,
+                  })
+                }
+              />
+            </div>
+            <Input
+              placeholder={t("usage.searchModelPlaceholder")}
+              className="w-[180px] bg-background"
+              value={tempFilters.model || ""}
+              onChange={(e) =>
+                setTempFilters({
+                  ...tempFilters,
+                  model: e.target.value || undefined,
+                })
+              }
+            />
+          </div>
+        </div>
 
-        <Input
-          placeholder={t("usage.model", "模型名称")}
-          className="w-[140px]"
-          value={tempFilters.model || ""}
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              model: e.target.value || undefined,
-            })
-          }
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="whitespace-nowrap">{t("usage.timeRange")}:</span>
+            <Input
+              type="datetime-local"
+              className="h-8 w-[200px] bg-background"
+              value={
+                tempFilters.startDate
+                  ? timestampToLocalDatetime(tempFilters.startDate)
+                  : ""
+              }
+              onChange={(e) => {
+                const timestamp = localDatetimeToTimestamp(e.target.value);
+                setTempFilters({
+                  ...tempFilters,
+                  startDate: timestamp,
+                });
+              }}
+            />
+            <span>-</span>
+            <Input
+              type="datetime-local"
+              className="h-8 w-[200px] bg-background"
+              value={
+                tempFilters.endDate
+                  ? timestampToLocalDatetime(tempFilters.endDate)
+                  : ""
+              }
+              onChange={(e) => {
+                const timestamp = localDatetimeToTimestamp(e.target.value);
+                setTempFilters({
+                  ...tempFilters,
+                  endDate: timestamp,
+                });
+              }}
+            />
+          </div>
 
-        <Input
-          type="datetime-local"
-          className="w-[180px]"
-          value={
-            tempFilters.startDate
-              ? new Date(tempFilters.startDate * 1000)
-                  .toISOString()
-                  .slice(0, 16)
-              : ""
-          }
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              startDate: e.target.value
-                ? Math.floor(new Date(e.target.value).getTime() / 1000)
-                : undefined,
-            })
-          }
-        />
-
-        <Input
-          type="datetime-local"
-          className="w-[180px]"
-          value={
-            tempFilters.endDate
-              ? new Date(tempFilters.endDate * 1000).toISOString().slice(0, 16)
-              : ""
-          }
-          onChange={(e) =>
-            setTempFilters({
-              ...tempFilters,
-              endDate: e.target.value
-                ? Math.floor(new Date(e.target.value).getTime() / 1000)
-                : undefined,
-            })
-          }
-        />
-
-        <div className="ml-auto flex gap-2">
-          <Button size="sm" onClick={handleSearch}>
-            <Search className="mr-1 h-4 w-4" />
-            {t("common.search", "查询")}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleReset}>
-            <X className="mr-1 h-4 w-4" />
-            {t("common.reset", "重置")}
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleRefresh}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleSearch}
+              className="h-8"
+            >
+              <Search className="mr-2 h-3.5 w-3.5" />
+              {t("common.search")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleReset}
+              className="h-8"
+            >
+              <X className="mr-2 h-3.5 w-3.5" />
+              {t("common.reset")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleRefresh}
+              className="h-8 px-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -189,34 +240,40 @@ export function RequestLogTable() {
         <div className="h-[400px] animate-pulse rounded bg-gray-100" />
       ) : (
         <>
-          <div className="rounded-md bg-card/60 shadow-sm overflow-x-auto">
+          <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t("usage.time", "时间")}</TableHead>
-                  <TableHead>{t("usage.provider", "供应商")}</TableHead>
-                  <TableHead className="min-w-[280px]">
-                    {t("usage.billingModel", "计费模型")}
+                  <TableHead className="whitespace-nowrap">
+                    {t("usage.time")}
                   </TableHead>
-                  <TableHead className="text-right">
-                    {t("usage.inputTokens", "输入")}
+                  <TableHead className="whitespace-nowrap">
+                    {t("usage.provider")}
                   </TableHead>
-                  <TableHead className="text-right">
-                    {t("usage.outputTokens", "输出")}
+                  <TableHead className="min-w-[280px] whitespace-nowrap">
+                    {t("usage.billingModel")}
                   </TableHead>
-                  <TableHead className="text-right min-w-[90px]">
-                    {t("usage.cacheCreationTokens", "缓存写入")}
+                  <TableHead className="text-right whitespace-nowrap">
+                    {t("usage.inputTokens")}
                   </TableHead>
-                  <TableHead className="text-right min-w-[90px]">
-                    {t("usage.cacheReadTokens", "缓存读取")}
+                  <TableHead className="text-right whitespace-nowrap">
+                    {t("usage.outputTokens")}
                   </TableHead>
-                  <TableHead className="text-right">
-                    {t("usage.totalCost", "成本")}
+                  <TableHead className="text-right min-w-[90px] whitespace-nowrap">
+                    {t("usage.cacheReadTokens")}
                   </TableHead>
-                  <TableHead className="text-center min-w-[140px]">
-                    {t("usage.timingInfo", "用时/首字")}
+                  <TableHead className="text-right min-w-[90px] whitespace-nowrap">
+                    {t("usage.cacheCreationTokens")}
                   </TableHead>
-                  <TableHead>{t("usage.status", "状态")}</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">
+                    {t("usage.totalCost")}
+                  </TableHead>
+                  <TableHead className="text-center min-w-[140px] whitespace-nowrap">
+                    {t("usage.timingInfo")}
+                  </TableHead>
+                  <TableHead className="whitespace-nowrap">
+                    {t("usage.status")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -226,18 +283,19 @@ export function RequestLogTable() {
                       colSpan={10}
                       className="text-center text-muted-foreground"
                     >
-                      {t("usage.noData", "暂无数据")}
+                      {t("usage.noData")}
                     </TableCell>
                   </TableRow>
                 ) : (
                   logs.map((log) => (
                     <TableRow key={log.requestId}>
                       <TableCell>
-                        {new Date(log.createdAt * 1000).toLocaleString("zh-CN")}
+                        {new Date(log.createdAt * 1000).toLocaleString(
+                          dateLocale,
+                        )}
                       </TableCell>
                       <TableCell>
-                        {log.providerName ||
-                          t("usage.unknownProvider", "未知供应商")}
+                        {log.providerName || t("usage.unknownProvider")}
                       </TableCell>
                       <TableCell
                         className="font-mono text-sm max-w-[280px] truncate"
@@ -252,10 +310,10 @@ export function RequestLogTable() {
                         {log.outputTokens.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.cacheCreationTokens.toLocaleString()}
+                        {log.cacheReadTokens.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right">
-                        {log.cacheReadTokens.toLocaleString()}
+                        {log.cacheCreationTokens.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right">
                         ${parseFloat(log.totalCostUsd).toFixed(6)}
@@ -305,8 +363,8 @@ export function RequestLogTable() {
                             }`}
                           >
                             {log.isStreaming
-                              ? t("usage.stream", "流")
-                              : t("usage.nonStream", "非流")}
+                              ? t("usage.stream")
+                              : t("usage.nonStream")}
                           </span>
                         </div>
                       </TableCell>
@@ -332,7 +390,7 @@ export function RequestLogTable() {
           {total > 0 && (
             <div className="flex items-center justify-between px-2">
               <span className="text-sm text-muted-foreground">
-                {t("usage.totalRecords", "共 {{total}} 条记录", { total })}
+                {t("usage.totalRecords", { total })}
               </span>
               <div className="flex items-center gap-1">
                 <Button

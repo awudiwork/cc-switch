@@ -39,8 +39,8 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, SkillService,
-    SpeedtestService,
+    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
+    SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
@@ -51,7 +51,6 @@ use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-#[cfg(target_os = "macos")]
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 
@@ -192,15 +191,6 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let settings = crate::settings::get_settings();
 
-                // 窗口关闭时创建备份
-                if let Some(app_state) = window.app_handle().try_state::<AppState>() {
-                    if let Ok(Some(backup_path)) = app_state.db.backup_database_file() {
-                        if let Some(backup_id) = backup_path.file_stem().and_then(|s| s.to_str()) {
-                            log::info!("✓ Database backed up on window close: {}", backup_id);
-                        }
-                    }
-                }
-
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
                     let _ = window.hide();
@@ -233,44 +223,6 @@ pub fn run() {
                     log::warn!("初始化 Updater 插件失败，已跳过：{e}");
                 }
             }
-            #[cfg(target_os = "macos")]
-            {
-                // 设置 macOS 标题栏背景色为主界面蓝色
-                if let Some(window) = app.get_webview_window("main") {
-                    use objc2::rc::Retained;
-                    use objc2::runtime::AnyObject;
-                    use objc2_app_kit::NSColor;
-
-                    match window.ns_window() {
-                        Ok(ns_window_ptr) => {
-                            if let Some(ns_window) =
-                                unsafe { Retained::retain(ns_window_ptr as *mut AnyObject) }
-                            {
-                                // 使用与主界面 banner 相同的蓝色 #3498db
-                                // #3498db = RGB(52, 152, 219)
-                                let bg_color = unsafe {
-                                    NSColor::colorWithRed_green_blue_alpha(
-                                        52.0 / 255.0,  // R: 52
-                                        152.0 / 255.0, // G: 152
-                                        219.0 / 255.0, // B: 219
-                                        1.0,           // Alpha: 1.0
-                                    )
-                                };
-
-                                unsafe {
-                                    use objc2::msg_send;
-                                    let _: () =
-                                        msg_send![&*ns_window, setBackgroundColor: &*bg_color];
-                                }
-                            } else {
-                                log::warn!("Failed to retain NSWindow reference");
-                            }
-                        }
-                        Err(e) => log::warn!("Failed to get NSWindow pointer: {e}"),
-                    }
-                }
-            }
-
             // 初始化日志
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -321,12 +273,25 @@ pub fn run() {
                 None
             };
 
-            // 现在创建数据库
-            let db = match crate::database::Database::init() {
-                Ok(db) => Arc::new(db),
-                Err(e) => {
-                    log::error!("Failed to init database: {e}");
-                    return Err(Box::new(e));
+            // 现在创建数据库（包含 Schema 迁移）
+            //
+            // 说明：从 v3.8.* 升级的用户通常会走到这里的 SQLite schema 迁移，
+            // 若迁移失败（数据库损坏/权限不足/user_version 过新等），需要给用户明确提示，
+            // 否则表现可能只是“应用打不开/闪退”。
+            let db = loop {
+                match crate::database::Database::init() {
+                    Ok(db) => break Arc::new(db),
+                    Err(e) => {
+                        log::error!("Failed to init database: {e}");
+
+                        if !show_database_init_error_dialog(app.handle(), &db_path, &e.to_string())
+                        {
+                            log::info!("用户选择退出程序");
+                            std::process::exit(1);
+                        }
+
+                        log::info!("用户选择重试初始化数据库");
+                    }
                 }
             };
 
@@ -356,6 +321,9 @@ pub fn run() {
 
             let app_state = AppState::new(db);
 
+            // 设置 AppHandle 用于代理故障转移时的 UI 更新
+            app_state.proxy_service.set_app_handle(app.handle().clone());
+
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
             // ============================================================
@@ -367,6 +335,47 @@ pub fn run() {
                 }
                 Ok(_) => {} // 表非空，静默跳过
                 Err(e) => log::warn!("✗ Failed to initialize default skill repos: {e}"),
+            }
+
+            // 1.1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
+            // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制。
+            match app_state.db.get_setting("skills_ssot_migration_pending") {
+                Ok(Some(flag)) if flag == "true" || flag == "1" => {
+                    // 安全保护：如果用户已经有 v3 结构的 Skills 数据，就不要自动清空重建。
+                    let has_existing = app_state
+                        .db
+                        .get_all_installed_skills()
+                        .map(|skills| !skills.is_empty())
+                        .unwrap_or(false);
+
+                    if has_existing {
+                        log::info!(
+                            "Detected skills_ssot_migration_pending but skills table not empty; skipping auto import."
+                        );
+                        let _ = app_state
+                            .db
+                            .set_setting("skills_ssot_migration_pending", "false");
+                    } else {
+                        match crate::services::skill::migrate_skills_to_ssot(&app_state.db) {
+                            Ok(count) => {
+                                log::info!("✓ Auto imported {count} skill(s) into SSOT");
+                                if count > 0 {
+                                    crate::init_status::set_skills_migration_result(count);
+                                }
+                                let _ = app_state
+                                    .db
+                                    .set_setting("skills_ssot_migration_pending", "false");
+                            }
+                            Err(e) => {
+                                log::warn!("✗ Failed to auto import legacy skills to SSOT: {e}");
+                                crate::init_status::set_skills_migration_error(e.to_string());
+                                // 保留 pending 标志，方便下次启动重试
+                            }
+                        }
+                    }
+                }
+                Ok(_) => {} // 未开启迁移标志，静默跳过
+                Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
             // 2. 导入供应商配置（已有内置检查：该应用已有供应商则跳过）
@@ -381,6 +390,27 @@ pub fn run() {
                 ) {
                     Ok(true) => {
                         log::info!("✓ Imported default provider for {}", app.as_str());
+
+                        // 首次运行：自动提取通用配置片段（仅当通用配置为空时）
+                        if app_state
+                            .db
+                            .get_config_snippet(app.as_str())
+                            .ok()
+                            .flatten()
+                            .is_none()
+                        {
+                            match crate::services::provider::ProviderService::extract_common_config_snippet(&app_state, app.clone()) {
+                                Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                                    if let Err(e) = app_state.db.set_config_snippet(app.as_str(), Some(snippet)) {
+                                        log::warn!("✗ Failed to save common config snippet for {}: {e}", app.as_str());
+                                    } else {
+                                        log::info!("✓ Extracted common config snippet for {}", app.as_str());
+                                    }
+                                }
+                                Ok(_) => log::debug!("○ No common config to extract for {}", app.as_str()),
+                                Err(e) => log::debug!("○ Failed to extract common config for {}: {e}", app.as_str()),
+                            }
+                        }
                     }
                     Ok(false) => {} // 已有供应商，静默跳过
                     Err(e) => {
@@ -552,35 +582,36 @@ pub fn run() {
             app.manage(app_state);
 
             // 初始化 SkillService
-            match SkillService::new() {
-                Ok(skill_service) => {
-                    app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
-                }
-                Err(e) => {
-                    log::warn!("初始化 SkillService 失败: {e}");
-                }
-            }
+            let skill_service = SkillService::new();
+            app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
-            // 自动启动代理服务器
+            // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<AppState>();
-                match state.db.get_proxy_config().await {
-                    Ok(config) => {
-                        if config.enabled {
-                            log::info!("代理服务配置为启用，正在启动...");
-                            match state.proxy_service.start().await {
-                                Ok(info) => log::info!(
-                                    "代理服务器自动启动成功: {}:{}",
-                                    info.address,
-                                    info.port
-                                ),
-                                Err(e) => log::error!("代理服务器自动启动失败: {e}"),
-                            }
-                        }
+
+                // 检查是否有 Live 备份（表示上次异常退出时可能处于接管状态）
+                let has_backups = match state.db.has_any_live_backup().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("检查 Live 备份失败: {e}");
+                        false
                     }
-                    Err(e) => log::error!("启动时获取代理配置失败: {e}"),
+                };
+                // 检查 Live 配置是否仍处于被接管状态（包含占位符）
+                let live_taken_over = state.proxy_service.detect_takeover_in_live_configs();
+
+                if has_backups || live_taken_over {
+                    log::warn!("检测到上次异常退出（存在接管残留），正在恢复 Live 配置...");
+                    if let Err(e) = state.proxy_service.recover_from_crash().await {
+                        log::error!("恢复 Live 配置失败: {e}");
+                    } else {
+                        log::info!("Live 配置已恢复");
+                    }
                 }
+
+                // 检查 settings 表中的代理状态，自动恢复代理服务
+                restore_proxy_state_on_startup(&state).await;
             });
 
             Ok(())
@@ -592,7 +623,6 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::switch_provider,
-            commands::set_proxy_target_provider,
             commands::import_default_config,
             commands::get_claude_config_status,
             commands::get_config_status,
@@ -603,12 +633,14 @@ pub fn run() {
             commands::open_external,
             commands::get_init_error,
             commands::get_migration_result,
+            commands::get_skills_migration_result,
             commands::get_app_config_path,
             commands::open_app_config_folder,
             commands::get_claude_common_config_snippet,
             commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
+            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
@@ -635,11 +667,12 @@ pub fn run() {
             commands::upsert_mcp_server_in_config,
             commands::delete_mcp_server_in_config,
             commands::set_mcp_enabled,
-            // v3.7.0: Unified MCP management
+            // Unified MCP management
             commands::get_mcp_servers,
             commands::upsert_mcp_server,
             commands::delete_mcp_server,
             commands::toggle_mcp_app,
+            commands::import_mcp_from_apps,
             // Prompt management
             commands::get_prompts,
             commands::upsert_prompt,
@@ -674,25 +707,56 @@ pub fn run() {
             commands::check_env_conflicts,
             commands::delete_env_vars,
             commands::restore_env_backup,
-            // Skill management
+            // Skill management (v3.10.0+ unified)
+            commands::get_installed_skills,
+            commands::install_skill_unified,
+            commands::uninstall_skill_unified,
+            commands::toggle_skill_app,
+            commands::scan_unmanaged_skills,
+            commands::import_skills_from_apps,
+            commands::discover_available_skills,
+            // Skill management (legacy API compatibility)
             commands::get_skills,
+            commands::get_skills_for_app,
             commands::install_skill,
+            commands::install_skill_for_app,
             commands::uninstall_skill,
+            commands::uninstall_skill_for_app,
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
-            // Backup
-            commands::get_backup_info,
             // Proxy server management
             commands::start_proxy_server,
-            commands::stop_proxy_server,
+            commands::stop_proxy_with_restore,
+            commands::get_proxy_takeover_status,
+            commands::set_proxy_takeover_for_app,
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
+            // Global & Per-App Config
+            commands::get_global_proxy_config,
+            commands::update_global_proxy_config,
+            commands::get_proxy_config_for_app,
+            commands::update_proxy_config_for_app,
             commands::is_proxy_running,
+            commands::is_live_takeover_active,
+            commands::switch_proxy_provider,
+            // Proxy failover commands
+            commands::get_provider_health,
+            commands::reset_circuit_breaker,
+            commands::get_circuit_breaker_config,
+            commands::update_circuit_breaker_config,
+            commands::get_circuit_breaker_stats,
+            // Failover queue management
+            commands::get_failover_queue,
+            commands::get_available_providers_for_failover,
+            commands::add_to_failover_queue,
+            commands::remove_from_failover_queue,
+            commands::get_auto_failover_enabled,
+            commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_trends,
@@ -704,13 +768,20 @@ pub fn run() {
             commands::update_model_pricing,
             commands::delete_model_pricing,
             commands::check_provider_limits,
-            // Model testing
-            commands::test_provider_model,
-            commands::test_all_providers_model,
-            commands::get_model_test_config,
-            commands::save_model_test_config,
-            commands::get_model_test_logs,
-            commands::cleanup_model_test_logs,
+            // Stream health check
+            commands::stream_check_provider,
+            commands::stream_check_all_providers,
+            commands::get_stream_check_config,
+            commands::save_stream_check_config,
+            commands::get_tool_versions,
+            // Universal Provider management
+            commands::get_universal_providers,
+            commands::get_universal_provider,
+            commands::upsert_universal_provider,
+        commands::delete_universal_provider,
+            commands::sync_universal_provider,
+            // Backup info
+            commands::get_backup_info,
         ]);
 
     let app = builder
@@ -718,6 +789,26 @@ pub fn run() {
         .expect("error while running tauri application");
 
     app.run(|app_handle, event| {
+        // 处理退出请求（所有平台）
+        if let RunEvent::ExitRequested { api, .. } = &event {
+            log::info!("收到退出请求，开始清理...");
+            // 阻止立即退出，执行清理
+            api.prevent_exit();
+
+            let app_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                cleanup_before_exit(&app_handle).await;
+                log::info!("清理完成，退出应用");
+
+                // 短暂等待确保所有 I/O 操作（如数据库写入）刷新到磁盘
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                // 使用 std::process::exit 避免再次触发 ExitRequested
+                std::process::exit(0);
+            });
+            return;
+        }
+
         #[cfg(target_os = "macos")]
         {
             match event {
@@ -798,6 +889,103 @@ pub fn run() {
 }
 
 // ============================================================
+// 应用退出清理
+// ============================================================
+
+/// 应用退出前的清理工作
+///
+/// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
+/// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
+/// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
+pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<store::AppState>() {
+        let proxy_service = &state.proxy_service;
+
+        // 退出时也需要兜底：代理可能已崩溃/未运行，但 Live 接管残留仍在（占位符/备份）。
+        let has_backups = match state.db.has_any_live_backup().await {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("退出时检查 Live 备份失败: {e}");
+                false
+            }
+        };
+        let live_taken_over = proxy_service.detect_takeover_in_live_configs();
+        let needs_restore = has_backups || live_taken_over;
+
+        if needs_restore {
+            log::info!("检测到接管残留，开始恢复 Live 配置（保留代理状态）...");
+            // 使用 keep_state 版本，保留 settings 表中的代理状态
+            if let Err(e) = proxy_service.stop_with_restore_keep_state().await {
+                log::error!("退出时恢复 Live 配置失败: {e}");
+            } else {
+                log::info!("已恢复 Live 配置（代理状态已保留，下次启动将自动恢复）");
+            }
+            return;
+        }
+
+        // 非接管模式：代理在运行则仅停止代理
+        if proxy_service.is_running().await {
+            log::info!("检测到代理服务器正在运行，开始停止...");
+            if let Err(e) = proxy_service.stop().await {
+                log::error!("退出时停止代理失败: {e}");
+            }
+            log::info!("代理服务器清理完成");
+        }
+    }
+}
+
+// ============================================================
+// 启动时恢复代理状态
+// ============================================================
+
+/// 启动时根据 proxy_config 表中的代理状态自动恢复代理服务
+///
+/// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
+/// 则自动启动代理服务并接管对应应用的 Live 配置。
+async fn restore_proxy_state_on_startup(state: &store::AppState) {
+    // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
+    let mut apps_to_restore = Vec::new();
+    for app_type in ["claude", "codex", "gemini"] {
+        if let Ok(config) = state.db.get_proxy_config_for_app(app_type).await {
+            if config.enabled {
+                apps_to_restore.push(app_type);
+            }
+        }
+    }
+
+    if apps_to_restore.is_empty() {
+        log::debug!("启动时无需恢复代理状态");
+        return;
+    }
+
+    log::info!("检测到上次代理状态需要恢复，应用列表: {apps_to_restore:?}");
+
+    // 逐个恢复接管状态
+    for app_type in apps_to_restore {
+        match state
+            .proxy_service
+            .set_takeover_for_app(app_type, true)
+            .await
+        {
+            Ok(()) => {
+                log::info!("✓ 已恢复 {app_type} 的代理接管状态");
+            }
+            Err(e) => {
+                log::error!("✗ 恢复 {app_type} 的代理接管状态失败: {e}");
+                // 失败时清除该应用的状态，避免下次启动再次尝试
+                if let Err(clear_err) = state
+                    .proxy_service
+                    .set_takeover_for_app(app_type, false)
+                    .await
+                {
+                    log::error!("清除 {app_type} 代理状态失败: {clear_err}");
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
 // 迁移错误对话框辅助函数
 // ============================================================
 
@@ -850,6 +1038,71 @@ fn show_migration_error_dialog(app: &tauri::AppHandle, error: &str) -> bool {
 
     // 使用 blocking_show 同步等待用户响应
     // OkCancelCustom: 第一个按钮（重试）返回 true，第二个按钮（退出）返回 false
+    app.dialog()
+        .message(&message)
+        .title(title)
+        .kind(MessageDialogKind::Error)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            retry_text.to_string(),
+            exit_text.to_string(),
+        ))
+        .blocking_show()
+}
+
+/// 显示数据库初始化/Schema 迁移失败对话框
+/// 返回 true 表示用户选择重试，false 表示用户选择退出
+fn show_database_init_error_dialog(
+    app: &tauri::AppHandle,
+    db_path: &std::path::Path,
+    error: &str,
+) -> bool {
+    let title = if is_chinese_locale() {
+        "数据库初始化失败"
+    } else {
+        "Database Initialization Failed"
+    };
+
+    let message = if is_chinese_locale() {
+        format!(
+            "初始化数据库或迁移数据库结构时发生错误：\n\n{error}\n\n\
+            数据库文件路径：\n{db}\n\n\
+            您的数据尚未丢失，应用不会自动删除数据库文件。\n\
+            常见原因包括：数据库版本过新、文件损坏、权限不足、磁盘空间不足等。\n\n\
+            建议：\n\
+            1) 先备份整个配置目录（包含 cc-switch.db）\n\
+            2) 如果提示“数据库版本过新”，请升级到更新版本\n\
+            3) 如果刚升级出现异常，可回退旧版本导出/备份后再升级\n\n\
+            点击「重试」重新尝试初始化\n\
+            点击「退出」关闭程序",
+            db = db_path.display()
+        )
+    } else {
+        format!(
+            "An error occurred while initializing or migrating the database:\n\n{error}\n\n\
+            Database file path:\n{db}\n\n\
+            Your data is NOT lost - the app will not delete the database automatically.\n\
+            Common causes include: newer database version, corrupted file, permission issues, or low disk space.\n\n\
+            Suggestions:\n\
+            1) Back up the entire config directory (including cc-switch.db)\n\
+            2) If you see “database version is newer”, please upgrade CC Switch\n\
+            3) If this happened right after upgrading, consider rolling back to export/backup then upgrade again\n\n\
+            Click 'Retry' to attempt initialization again\n\
+            Click 'Exit' to close the program",
+            db = db_path.display()
+        )
+    };
+
+    let retry_text = if is_chinese_locale() {
+        "重试"
+    } else {
+        "Retry"
+    };
+    let exit_text = if is_chinese_locale() {
+        "退出"
+    } else {
+        "Exit"
+    };
+
     app.dialog()
         .message(&message)
         .title(title)

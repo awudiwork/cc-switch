@@ -17,7 +17,7 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, is_proxy_target
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -35,7 +35,7 @@ impl Database {
                 let icon: Option<String> = row.get(8)?;
                 let icon_color: Option<String> = row.get(9)?;
                 let meta_str: String = row.get(10)?;
-                let is_proxy_target: bool = row.get(11)?;
+                let in_failover_queue: bool = row.get(11)?;
 
                 let settings_config =
                     serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
@@ -55,7 +55,7 @@ impl Database {
                         meta: Some(meta),
                         icon,
                         icon_color,
-                        is_proxy_target: Some(is_proxy_target),
+                        in_failover_queue,
                     },
                 ))
             })
@@ -131,7 +131,7 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, is_proxy_target
+            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
             |row| {
@@ -145,7 +145,7 @@ impl Database {
                 let icon: Option<String> = row.get(7)?;
                 let icon_color: Option<String> = row.get(8)?;
                 let meta_str: String = row.get(9)?;
-                let is_proxy_target: bool = row.get(10)?;
+                let in_failover_queue: bool = row.get(10)?;
 
                 let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
@@ -162,7 +162,7 @@ impl Database {
                     meta: Some(meta),
                     icon,
                     icon_color,
-                    is_proxy_target: Some(is_proxy_target),
+                    in_failover_queue,
                 })
             },
         );
@@ -171,26 +171,6 @@ impl Database {
             Ok(provider) => Ok(Some(provider)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AppError::Database(e.to_string())),
-        }
-    }
-
-    /// 获取代理目标供应商 ID
-    pub fn get_proxy_target_provider(&self, app_type: &str) -> Result<Option<String>, AppError> {
-        let conn = lock_conn!(self.conn);
-        let mut stmt = conn
-            .prepare("SELECT id FROM providers WHERE app_type = ?1 AND is_proxy_target = 1 LIMIT 1")
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let mut rows = stmt
-            .query(params![app_type])
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        if let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
-            Ok(Some(
-                row.get(0).map_err(|e| AppError::Database(e.to_string()))?,
-            ))
-        } else {
-            Ok(None)
         }
     }
 
@@ -208,17 +188,18 @@ impl Database {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
-        // 检查是否存在（用于判断新增/更新，以及保留 is_current 和 is_proxy_target）
+        // 检查是否存在（用于判断新增/更新，以及保留 is_current 和 in_failover_queue）
         let existing: Option<(bool, bool)> = tx
             .query_row(
-                "SELECT is_current, is_proxy_target FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let (is_current, is_proxy_target) = existing.unwrap_or((false, false));
+        let (is_current, in_failover_queue) =
+            existing.unwrap_or((false, provider.in_failover_queue));
 
         if is_update {
             // 更新模式：使用 UPDATE 避免触发 ON DELETE CASCADE
@@ -235,7 +216,7 @@ impl Database {
                     icon_color = ?9,
                     meta = ?10,
                     is_current = ?11,
-                    is_proxy_target = ?12
+                    in_failover_queue = ?12
                 WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
@@ -249,7 +230,7 @@ impl Database {
                     provider.icon_color,
                     serde_json::to_string(&meta_clone).unwrap(),
                     is_current,
-                    is_proxy_target,
+                    in_failover_queue,
                     provider.id,
                     app_type,
                 ],
@@ -260,7 +241,7 @@ impl Database {
             tx.execute(
                 "INSERT INTO providers (
                     id, app_type, name, settings_config, website_url, category,
-                    created_at, sort_index, notes, icon, icon_color, meta, is_current, is_proxy_target
+                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     provider.id,
@@ -276,7 +257,7 @@ impl Database {
                     provider.icon_color,
                     serde_json::to_string(&meta_clone).unwrap(),
                     is_current,
-                    is_proxy_target,
+                    in_failover_queue,
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -332,45 +313,24 @@ impl Database {
         Ok(())
     }
 
-    /// 设置代理目标供应商
-    pub fn set_proxy_target_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
-        let mut conn = lock_conn!(self.conn);
-        let tx = conn
-            .transaction()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 重置所有为 0
-        tx.execute(
-            "UPDATE providers SET is_proxy_target = 0 WHERE app_type = ?1",
-            params![app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 设置新的代理目标供应商
-        tx.execute(
-            "UPDATE providers SET is_proxy_target = 1 WHERE id = ?1 AND app_type = ?2",
-            params![id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
-    }
-
-    /// 获取所有活跃的代理目标
-    pub fn get_all_proxy_targets(&self) -> Result<Vec<(String, String, String)>, AppError> {
+    /// 更新供应商的 settings_config（仅更新配置，不改变其他字段）
+    pub fn update_provider_settings_config(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        settings_config: &serde_json::Value,
+    ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        let mut stmt = conn
-            .prepare("SELECT app_type, name, id FROM providers WHERE is_proxy_target = 1")
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let targets = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        Ok(targets)
+        conn.execute(
+            "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
+            params![
+                serde_json::to_string(settings_config).unwrap(),
+                provider_id,
+                app_type
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     /// 添加自定义端点

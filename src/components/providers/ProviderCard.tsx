@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { GripVertical } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   DraggableAttributes,
@@ -11,8 +11,10 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
+import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
+import { useProviderHealth } from "@/lib/query/failover";
+import { useUsageQuery } from "@/lib/query/queries";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -32,9 +34,15 @@ interface ProviderCardProps {
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   isTesting?: boolean;
-  onSetProxyTarget: (provider: Provider) => void;
   isProxyRunning: boolean;
+  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
+  // 故障转移相关
+  isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
+  failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
+  isInFailoverQueue?: boolean; // 是否在故障转移队列中
+  onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
+  activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -84,11 +92,20 @@ export function ProviderCard({
   onDuplicate,
   onTest,
   isTesting,
-  onSetProxyTarget,
   isProxyRunning,
+  isProxyTakeover = false,
   dragHandleProps,
+  // 故障转移相关
+  isAutoFailoverEnabled = false,
+  failoverPriority,
+  isInFailoverQueue = false,
+  onToggleFailover,
+  activeProviderId,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+
+  // 获取供应商健康状态
+  const { data: health } = useProviderHealth(provider.id, appId);
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -114,6 +131,29 @@ export function ProviderCard({
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
 
+  // 获取用量数据以判断是否有多套餐
+  const autoQueryInterval = isCurrent
+    ? provider.meta?.usage_script?.autoQueryInterval || 0
+    : 0;
+
+  const { data: usage } = useUsageQuery(provider.id, appId, {
+    enabled: usageEnabled,
+    autoQueryInterval,
+  });
+
+  const hasMultiplePlans =
+    usage?.success && usage.data && usage.data.length > 1;
+
+  // 多套餐默认展开
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // 当检测到多套餐时自动展开
+  useEffect(() => {
+    if (hasMultiplePlans) {
+      setIsExpanded(true);
+    }
+  }, [hasMultiplePlans]);
+
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
       return;
@@ -121,17 +161,46 @@ export function ProviderCard({
     onOpenWebsite(displayUrl);
   };
 
+  // 判断是否是"当前使用中"的供应商
+  // - 故障转移模式：代理实际使用的供应商（activeProviderId）
+  // - 代理接管模式（非故障转移）：isCurrent
+  // - 普通模式：isCurrent
+  const isActiveProvider = isAutoFailoverEnabled
+    ? activeProviderId === provider.id
+    : isCurrent;
+
+  // 判断是否使用绿色（代理接管模式）还是蓝色（普通模式）
+  const shouldUseGreen = isProxyTakeover && isActiveProvider;
+  const shouldUseBlue = !isProxyTakeover && isActiveProvider;
+
   return (
     <div
       className={cn(
-        "glass-card relative overflow-hidden rounded-xl p-4 transition-all duration-300",
-        "group hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:border-primary/50",
-        isCurrent ? "glass-card-active" : "hover:scale-[1.01]",
+        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
+        "bg-card text-card-foreground group",
+        // hover 时的边框效果
+        isAutoFailoverEnabled || isProxyTakeover
+          ? "hover:border-emerald-500/50"
+          : "hover:border-border-active",
+        // 当前激活的供应商边框样式
+        shouldUseGreen &&
+          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
+        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
+        !isActiveProvider && "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+      <div
+        className={cn(
+          "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
+          // 代理接管模式使用绿色渐变，普通模式使用蓝色渐变
+          shouldUseGreen && "from-emerald-500/10",
+          shouldUseBlue && "from-blue-500/10",
+          !isActiveProvider && "from-primary/10",
+          isActiveProvider ? "opacity-100" : "opacity-0",
+        )}
+      />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 items-center gap-2">
           <button
@@ -149,7 +218,7 @@ export function ProviderCard({
           </button>
 
           {/* 供应商图标 */}
-          <div className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10 group-hover:scale-105 transition-transform duration-300">
+          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
               icon={provider.icon}
               name={provider.name}
@@ -159,10 +228,25 @@ export function ProviderCard({
           </div>
 
           <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2 min-h-[20px]">
+            <div className="flex flex-wrap items-center gap-2 min-h-7">
               <h3 className="text-base font-semibold leading-none">
                 {provider.name}
               </h3>
+
+              {/* 健康状态徽章 */}
+              {isProxyRunning && isInFailoverQueue && health && (
+                <ProviderHealthBadge
+                  consecutiveFailures={health.consecutive_failures}
+                />
+              )}
+
+              {/* 故障转移优先级徽章 */}
+              {isAutoFailoverEnabled &&
+                isInFailoverQueue &&
+                failoverPriority && (
+                  <FailoverPriorityBadge priority={failoverPriority} />
+                )}
+
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (
                   <span
@@ -174,44 +258,6 @@ export function ProviderCard({
                     ⭐
                   </span>
                 )}
-
-              {/* 代理目标开关 - 仅在代理服务运行时显示 */}
-              {isProxyRunning && (
-                <div
-                  className="flex items-center gap-2 ml-2"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Switch
-                    id={`proxy-target-switch-${provider.id}`}
-                    checked={provider.isProxyTarget || false}
-                    onCheckedChange={(checked) => {
-                      if (checked && !provider.isProxyTarget) {
-                        onSetProxyTarget(provider);
-                      }
-                    }}
-                    disabled={provider.isProxyTarget}
-                    className="scale-75 data-[state=checked]:bg-purple-500"
-                  />
-                  {provider.isProxyTarget && (
-                    <Label
-                      htmlFor={`proxy-target-switch-${provider.id}`}
-                      className="text-xs font-medium text-purple-500 dark:text-purple-400 cursor-pointer"
-                    >
-                      {t("provider.proxyTarget", { defaultValue: "代理目标" })}
-                    </Label>
-                  )}
-                  {!provider.isProxyTarget && (
-                    <Label
-                      htmlFor={`proxy-target-switch-${provider.id}`}
-                      className="text-xs text-muted-foreground cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      {t("provider.setAsProxyTarget", {
-                        defaultValue: "设为代理",
-                      })}
-                    </Label>
-                  )}
-                </div>
-              )}
             </div>
 
             {displayUrl && (
@@ -233,32 +279,88 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="relative flex items-center ml-auto">
-          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[12.25rem] group-focus-within:-translate-x-[12.25rem] sm:group-hover:-translate-x-[14.25rem] sm:group-focus-within:-translate-x-[14.25rem]">
-            <UsageFooter
-              provider={provider}
-              providerId={provider.id}
-              appId={appId}
-              usageEnabled={usageEnabled}
-              isCurrent={isCurrent}
-              inline={true}
-            />
+        <div className="relative flex items-center ml-auto min-w-0">
+          {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
+          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16rem] sm:group-focus-within:-translate-x-[16rem]">
+            <div className="flex items-center gap-1">
+              {/* 多套餐时显示套餐数量，单套餐时显示详细信息 */}
+              {hasMultiplePlans ? (
+                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">
+                    {t("usage.multiplePlans", {
+                      count: usage?.data?.length || 0,
+                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                    })}
+                  </span>
+                </div>
+              ) : (
+                <UsageFooter
+                  provider={provider}
+                  providerId={provider.id}
+                  appId={appId}
+                  usageEnabled={usageEnabled}
+                  isCurrent={isCurrent}
+                  inline={true}
+                />
+              )}
+              {/* 展开/折叠按钮 - 仅在有多套餐时显示 */}
+              {hasMultiplePlans && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsExpanded(!isExpanded);
+                  }}
+                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  title={
+                    isExpanded
+                      ? t("usage.collapse", { defaultValue: "收起" })
+                      : t("usage.expand", { defaultValue: "展开" })
+                  }
+                >
+                  {isExpanded ? (
+                    <ChevronUp size={14} />
+                  ) : (
+                    <ChevronDown size={14} />
+                  )}
+                </button>
+              )}
+            </div>
           </div>
 
+          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入 */}
           <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
             <ProviderActions
               isCurrent={isCurrent}
               isTesting={isTesting}
+              isProxyTakeover={isProxyTakeover}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={onTest ? () => onTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
+              // 故障转移相关
+              isAutoFailoverEnabled={isAutoFailoverEnabled}
+              isInFailoverQueue={isInFailoverQueue}
+              onToggleFailover={onToggleFailover}
             />
           </div>
         </div>
       </div>
+
+      {/* 展开的完整套餐列表 */}
+      {isExpanded && hasMultiplePlans && (
+        <div className="mt-4 pt-4 border-t border-border-default">
+          <UsageFooter
+            provider={provider}
+            providerId={provider.id}
+            appId={appId}
+            usageEnabled={usageEnabled}
+            isCurrent={isCurrent}
+            inline={false}
+          />
+        </div>
+      )}
     </div>
   );
 }
