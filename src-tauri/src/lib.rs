@@ -833,6 +833,7 @@ pub fn run() {
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::sync_current_providers_live,
+            commands::get_backup_info,
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,

@@ -40,6 +40,7 @@ import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
+import { BackupStatus } from "@/components/BackupStatus";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
 import { FailoverToggle } from "@/components/proxy/FailoverToggle";
@@ -794,6 +795,18 @@ function App() {
             className="flex items-center gap-1.5 h-[32px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
+            {currentView === "providers" && (
+              <>
+                <BackupStatus />
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                  className="absolute -top-4 -right-4"
+                />
+              </>
+            )}
             {currentView === "prompts" && (
               <Button
                 variant="ghost"
