@@ -13,6 +13,8 @@ mod gemini_config;
 mod gemini_mcp;
 mod init_status;
 mod mcp;
+mod opencode_config;
+mod panic_hook;
 mod prompt;
 mod prompt_files;
 mod provider;
@@ -26,6 +28,7 @@ mod usage_script;
 
 pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::Database;
@@ -54,6 +57,37 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 
+fn redact_url_for_log(url_str: &str) -> String {
+    match url::Url::parse(url_str) {
+        Ok(url) => {
+            let mut output = format!("{}://", url.scheme());
+            if let Some(host) = url.host_str() {
+                output.push_str(host);
+            }
+            output.push_str(url.path());
+
+            let mut keys: Vec<String> = url.query_pairs().map(|(k, _)| k.to_string()).collect();
+            keys.sort();
+            keys.dedup();
+
+            if !keys.is_empty() {
+                output.push_str("?[keys:");
+                output.push_str(&keys.join(","));
+                output.push(']');
+            }
+
+            output
+        }
+        Err(_) => {
+            let base = url_str.split('#').next().unwrap_or(url_str);
+            match base.split_once('?') {
+                Some((prefix, _)) => format!("{prefix}?[redacted]"),
+                None => base.to_string(),
+            }
+        }
+    }
+}
+
 /// 统一处理 ccswitch:// 深链接 URL
 ///
 /// - 解析 URL
@@ -69,7 +103,9 @@ fn handle_deeplink_url(
         return false;
     }
 
-    log::info!("✓ Deep link URL detected from {source}: {url_str}");
+    let redacted_url = redact_url_for_log(url_str);
+    log::info!("✓ Deep link URL detected from {source}: {redacted_url}");
+    log::debug!("Deep link URL (raw) from {source}: {url_str}");
 
     match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
@@ -150,15 +186,18 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
+    panic_hook::setup_panic_hook();
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("=== Single Instance Callback Triggered ===");
-            log::info!("Args count: {}", args.len());
+            log::debug!("Args count: {}", args.len());
             for (i, arg) in args.iter().enumerate() {
-                log::info!("  arg[{i}]: {arg}");
+                log::debug!("  arg[{i}]: {}", redact_url_for_log(arg));
             }
 
             // Check for deep link URL in args (mainly for Windows/Linux command line)
@@ -212,6 +251,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
+            // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
+            app_store::refresh_app_config_dir_override(app.handle());
+            panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+
             // 注册 Updater 插件（桌面端）
             #[cfg(desktop)]
             {
@@ -223,17 +266,42 @@ pub fn run() {
                     log::warn!("初始化 Updater 插件失败，已跳过：{e}");
                 }
             }
-            // 初始化日志
-            if cfg!(debug_assertions) {
+            // 初始化日志（单文件输出到 <app_config_dir>/logs/cc-switch.log）
+            {
+                use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
+
+                let log_dir = panic_hook::get_log_dir();
+
+                // 确保日志目录存在
+                if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                    eprintln!("创建日志目录失败: {e}");
+                }
+
+                // 启动时删除旧日志文件，实现单文件覆盖效果
+                let log_file_path = log_dir.join("cc-switch.log");
+                let _ = std::fs::remove_file(&log_file_path);
+
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
+                        // 初始化为 Trace，允许后续通过 log::set_max_level() 动态调整级别
+                        .level(log::LevelFilter::Trace)
+                        .targets([
+                            Target::new(TargetKind::Stdout),
+                            Target::new(TargetKind::Folder {
+                                path: log_dir,
+                                file_name: Some("cc-switch".into()),
+                            }),
+                        ])
+                        // 单文件模式：启动时删除旧文件，达到大小时轮转
+                        // 注意：KeepSome(n) 内部会做 n-2 运算，n=1 会导致 usize 下溢
+                        // KeepSome(2) 是最小安全值，表示不保留轮转文件
+                        .rotation_strategy(RotationStrategy::KeepSome(2))
+                        // 单文件大小限制 1GB
+                        .max_file_size(1024 * 1024 * 1024)
+                        .timezone_strategy(TimezoneStrategy::UseLocal)
                         .build(),
                 )?;
             }
-
-            // 预先刷新 Store 覆盖配置，确保 AppState 初始化时可读取到最新路径
-            app_store::refresh_app_config_dir_override(app.handle());
 
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
@@ -423,6 +491,17 @@ pub fn run() {
                 }
             }
 
+            // 2.1 OpenCode 供应商导入（累加式模式，需特殊处理）
+            // OpenCode 与其他应用不同：配置文件中可同时存在多个供应商
+            // 需要遍历 provider 字段下的每个供应商并导入
+            match crate::services::provider::import_opencode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No OpenCode providers found to import"),
+                Err(e) => log::debug!("○ Failed to import OpenCode providers: {e}"),
+            }
+
             // 3. 导入 MCP 服务器配置（表空时触发）
             if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
@@ -449,6 +528,14 @@ pub fn run() {
                     }
                     Ok(_) => log::debug!("○ No Gemini MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_opencode(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from OpenCode");
+                    }
+                    Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
                 }
             }
 
@@ -529,7 +616,7 @@ pub fn run() {
 
                     for (i, url) in urls.iter().enumerate() {
                         let url_str = url.as_str();
-                        log::info!("  URL[{i}]: {url_str}");
+                        log::debug!("  URL[{i}]: {}", redact_url_for_log(url_str));
 
                         if handle_deeplink_url(&app_handle, url_str, true, "on_open_url") {
                             break; // Process only first ccswitch:// URL
@@ -581,9 +668,53 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 从数据库加载日志配置并应用
+            {
+                let db = &app.state::<AppState>().db;
+                if let Ok(log_config) = db.get_log_config() {
+                    log::set_max_level(log_config.to_level_filter());
+                    log::info!(
+                        "已加载日志配置: enabled={}, level={}",
+                        log_config.enabled,
+                        log_config.level
+                    );
+                }
+            }
+
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
+
+            // 初始化全局出站代理 HTTP 客户端
+            {
+                let db = &app.state::<AppState>().db;
+                let proxy_url = db.get_global_proxy_url().ok().flatten();
+
+                if let Err(e) = crate::proxy::http_client::init(proxy_url.as_deref()) {
+                    log::error!(
+                        "[GlobalProxy] [GP-005] Failed to initialize with saved config: {e}"
+                    );
+
+                    // 清除无效的代理配置
+                    if proxy_url.is_some() {
+                        log::warn!(
+                            "[GlobalProxy] [GP-006] Clearing invalid proxy config from database"
+                        );
+                        if let Err(clear_err) = db.set_global_proxy_url(None) {
+                            log::error!(
+                                "[GlobalProxy] [GP-007] Failed to clear invalid config: {clear_err}"
+                            );
+                        }
+                    }
+
+                    // 使用直连模式重新初始化
+                    if let Err(fallback_err) = crate::proxy::http_client::init(None) {
+                        log::error!(
+                            "[GlobalProxy] [GP-008] Failed to initialize direct connection: {fallback_err}"
+                        );
+                    }
+                }
+            }
 
             // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
@@ -622,6 +753,7 @@ pub fn run() {
             commands::add_provider,
             commands::update_provider,
             commands::delete_provider,
+            commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
             commands::get_claude_config_status,
@@ -644,6 +776,10 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::get_rectifier_config,
+            commands::set_rectifier_config,
+            commands::get_log_config,
+            commands::set_log_config,
             commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,
@@ -774,14 +910,23 @@ pub fn run() {
             commands::get_stream_check_config,
             commands::save_stream_check_config,
             commands::get_tool_versions,
+            // Provider terminal
+            commands::open_provider_terminal,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,
             commands::upsert_universal_provider,
-        commands::delete_universal_provider,
+            commands::delete_universal_provider,
             commands::sync_universal_provider,
-            // Backup info
-            commands::get_backup_info,
+            // OpenCode specific
+            commands::import_opencode_providers_from_live,
+            commands::get_opencode_live_provider_ids,
+            // Global upstream proxy
+            commands::get_global_proxy_url,
+            commands::set_global_proxy_url,
+            commands::test_proxy_url,
+            commands::get_upstream_proxy_status,
+            commands::scan_local_proxies,
         ]);
 
     let app = builder

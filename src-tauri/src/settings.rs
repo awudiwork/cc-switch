@@ -16,6 +16,47 @@ pub struct CustomEndpoint {
     pub last_used: Option<i64>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
+/// 主页面显示的应用配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisibleApps {
+    #[serde(default = "default_true")]
+    pub claude: bool,
+    #[serde(default = "default_true")]
+    pub codex: bool,
+    #[serde(default = "default_true")]
+    pub gemini: bool,
+    #[serde(default = "default_true")]
+    pub opencode: bool,
+}
+
+impl Default for VisibleApps {
+    fn default() -> Self {
+        Self {
+            claude: true,
+            codex: true,
+            gemini: true,
+            opencode: true,
+        }
+    }
+}
+
+impl VisibleApps {
+    /// Check if the specified app is visible
+    pub fn is_visible(&self, app: &AppType) -> bool {
+        match app {
+            AppType::Claude => self.claude,
+            AppType::Codex => self.codex,
+            AppType::Gemini => self.gemini,
+            AppType::OpenCode => self.opencode,
+        }
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -40,6 +81,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
+    // ===== 主页面显示的应用 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_apps: Option<VisibleApps>,
+
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
@@ -47,6 +92,8 @@ pub struct AppSettings {
     pub codex_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -58,6 +105,9 @@ pub struct AppSettings {
     /// 当前 Gemini 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_gemini: Option<String>,
+    /// 当前 OpenCode 供应商 ID（本地存储，对 OpenCode 可能无意义，但保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_opencode: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -65,10 +115,6 @@ fn default_show_in_tray() -> bool {
 }
 
 fn default_minimize_to_tray_on_close() -> bool {
-    true
-}
-
-fn default_true() -> bool {
     true
 }
 
@@ -81,23 +127,23 @@ impl Default for AppSettings {
             skip_claude_onboarding: true,
             launch_on_startup: false,
             language: None,
+            visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
+            opencode_config_dir: None,
             current_provider_claude: None,
             current_provider_codex: None,
             current_provider_gemini: None,
+            current_provider_opencode: None,
         }
     }
 }
 
 impl AppSettings {
-    fn settings_path() -> PathBuf {
+    fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        dirs::home_dir()
-            .expect("无法获取用户主目录")
-            .join(".cc-switch")
-            .join("settings.json")
+        dirs::home_dir().map(|h| h.join(".cc-switch").join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {
@@ -122,6 +168,13 @@ impl AppSettings {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
+        self.opencode_config_dir = self
+            .opencode_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         self.language = self
             .language
             .as_ref()
@@ -131,7 +184,9 @@ impl AppSettings {
     }
 
     fn load_from_file() -> Self {
-        let path = Self::settings_path();
+        let Some(path) = Self::settings_path() else {
+            return Self::default();
+        };
         if let Ok(content) = fs::read_to_string(&path) {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
@@ -156,7 +211,9 @@ impl AppSettings {
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let mut normalized = settings.clone();
     normalized.normalize_paths();
-    let path = AppSettings::settings_path();
+    let Some(path) = AppSettings::settings_path() else {
+        return Err(AppError::Config("无法获取用户主目录".to_string()));
+    };
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -193,14 +250,23 @@ fn resolve_override_path(raw: &str) -> PathBuf {
 }
 
 pub fn get_settings() -> AppSettings {
-    settings_store().read().expect("读取设置锁失败").clone()
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .clone()
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
 
-    let mut guard = settings_store().write().expect("写入设置锁失败");
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
     *guard = new_settings;
     Ok(())
 }
@@ -209,7 +275,10 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
     let fresh_settings = AppSettings::load_from_file();
-    let mut guard = settings_store().write().expect("写入设置锁失败");
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
     *guard = fresh_settings;
     Ok(())
 }
@@ -238,6 +307,14 @@ pub fn get_gemini_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_opencode_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .opencode_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -250,6 +327,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Claude => settings.current_provider_claude.clone(),
         AppType::Codex => settings.current_provider_codex.clone(),
         AppType::Gemini => settings.current_provider_gemini.clone(),
+        AppType::OpenCode => settings.current_provider_opencode.clone(),
     }
 }
 
@@ -264,6 +342,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Claude => settings.current_provider_claude = id.map(|s| s.to_string()),
         AppType::Codex => settings.current_provider_codex = id.map(|s| s.to_string()),
         AppType::Gemini => settings.current_provider_gemini = id.map(|s| s.to_string()),
+        AppType::OpenCode => settings.current_provider_opencode = id.map(|s| s.to_string()),
     }
 
     update_settings(settings)

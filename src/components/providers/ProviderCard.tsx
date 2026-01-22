@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -26,13 +26,17 @@ interface ProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
   appId: AppId;
+  isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
+  /** OpenCode: remove from live config (not delete from database) */
+  onRemoveFromConfig?: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
+  onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
@@ -84,13 +88,16 @@ export function ProviderCard({
   provider,
   isCurrent,
   appId,
+  isInConfig = true,
   onSwitch,
   onEdit,
   onDelete,
+  onRemoveFromConfig,
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
   onTest,
+  onOpenTerminal,
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
@@ -132,7 +139,9 @@ export function ProviderCard({
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
 
   // 获取用量数据以判断是否有多套餐
-  const autoQueryInterval = isCurrent
+  // OpenCode（累加模式）：使用 isInConfig 代替 isCurrent
+  const shouldAutoQuery = appId === "opencode" ? isInConfig : isCurrent;
+  const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
 
@@ -147,12 +156,30 @@ export function ProviderCard({
   // 多套餐默认展开
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // 操作按钮容器 ref，用于动态计算宽度
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const [actionsWidth, setActionsWidth] = useState(0);
+
   // 当检测到多套餐时自动展开
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
+
+  // 动态获取操作按钮宽度
+  useEffect(() => {
+    if (actionsRef.current) {
+      const updateWidth = () => {
+        const width = actionsRef.current?.offsetWidth || 0;
+        setActionsWidth(width);
+      };
+      updateWidth();
+      // 监听窗口大小变化
+      window.addEventListener("resize", updateWidth);
+      return () => window.removeEventListener("resize", updateWidth);
+    }
+  }, [onTest, onOpenTerminal]); // 按钮数量可能变化时重新计算
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -162,12 +189,16 @@ export function ProviderCard({
   };
 
   // 判断是否是"当前使用中"的供应商
+  // - OpenCode（累加模式）：不存在"当前"概念，始终返回 false
   // - 故障转移模式：代理实际使用的供应商（activeProviderId）
   // - 代理接管模式（非故障转移）：isCurrent
   // - 普通模式：isCurrent
-  const isActiveProvider = isAutoFailoverEnabled
-    ? activeProviderId === provider.id
-    : isCurrent;
+  const isActiveProvider =
+    appId === "opencode"
+      ? false
+      : isAutoFailoverEnabled
+        ? activeProviderId === provider.id
+        : isCurrent;
 
   // 判断是否使用绿色（代理接管模式）还是蓝色（普通模式）
   const shouldUseGreen = isProxyTakeover && isActiveProvider;
@@ -279,10 +310,17 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="relative flex items-center ml-auto min-w-0">
+        <div
+          className="relative flex items-center ml-auto min-w-0 gap-3"
+          style={
+            {
+              "--actions-width": `${actionsWidth || 320}px`,
+            } as React.CSSProperties
+          }
+        >
           {/* 用量信息区域 - hover 时向左移动，为操作按钮腾出空间 */}
-          <div className="ml-auto transition-transform duration-200 group-hover:-translate-x-[14.5rem] group-focus-within:-translate-x-[14.5rem] sm:group-hover:-translate-x-[16rem] sm:group-focus-within:-translate-x-[16rem]">
-            <div className="flex items-center gap-1">
+          <div className="ml-auto">
+            <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
               {/* 多套餐时显示套餐数量，单套餐时显示详细信息 */}
               {hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
@@ -300,6 +338,7 @@ export function ProviderCard({
                   appId={appId}
                   usageEnabled={usageEnabled}
                   isCurrent={isCurrent}
+                  isInConfig={isInConfig}
                   inline={true}
                 />
               )}
@@ -327,10 +366,15 @@ export function ProviderCard({
             </div>
           </div>
 
-          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入 */}
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0">
+          {/* 操作按钮区域 - 绝对定位在右侧，hover 时滑入，与用量信息保持间距 */}
+          <div
+            ref={actionsRef}
+            className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pl-3 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0"
+          >
             <ProviderActions
+              appId={appId}
               isCurrent={isCurrent}
+              isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
               onSwitch={() => onSwitch(provider)}
@@ -339,6 +383,14 @@ export function ProviderCard({
               onTest={onTest ? () => onTest(provider) : undefined}
               onConfigureUsage={() => onConfigureUsage(provider)}
               onDelete={() => onDelete(provider)}
+              onRemoveFromConfig={
+                onRemoveFromConfig
+                  ? () => onRemoveFromConfig(provider)
+                  : undefined
+              }
+              onOpenTerminal={
+                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+              }
               // 故障转移相关
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
@@ -357,6 +409,7 @@ export function ProviderCard({
             appId={appId}
             usageEnabled={usageEnabled}
             isCurrent={isCurrent}
+            isInConfig={isInConfig}
             inline={false}
           />
         </div>

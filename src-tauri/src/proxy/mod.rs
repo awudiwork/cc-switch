@@ -12,6 +12,8 @@ pub mod handler_config;
 pub mod handler_context;
 mod handlers;
 mod health;
+pub mod http_client;
+pub mod log_codes;
 pub mod model_mapper;
 pub mod provider_router;
 pub mod providers;
@@ -19,6 +21,7 @@ pub mod response_handler;
 pub mod response_processor;
 pub(crate) mod server;
 pub mod session;
+pub mod thinking_rectifier;
 pub(crate) mod types;
 pub mod usage;
 

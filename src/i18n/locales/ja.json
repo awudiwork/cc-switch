@@ -84,6 +84,10 @@
     "addClaudeProvider": "Claude Code プロバイダーを追加",
     "addCodexProvider": "Codex プロバイダーを追加",
     "addGeminiProvider": "Gemini プロバイダーを追加",
+    "addOpenCodeProvider": "OpenCode プロバイダーを追加",
+    "addToConfig": "追加",
+    "removeFromConfig": "削除",
+    "inConfig": "追加済み",
     "addProviderHint": "一覧にすばやく切り替えられるよう、ここに情報を入力してください。",
     "editClaudeProvider": "Claude Code プロバイダーを編集",
     "editCodexProvider": "Codex プロバイダーを編集",
@@ -133,6 +137,8 @@
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
+    "addToConfigSuccess": "設定に追加しました",
+    "removeFromConfigSuccess": "設定から削除しました",
     "switchFailedTitle": "切り替えに失敗しました",
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "autoImported": "既存設定からデフォルトプロバイダーを自動作成しました",
@@ -153,7 +159,9 @@
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
-    "deleteProviderMessage": "プロバイダー「{{name}}」を削除してもよろしいですか？この操作は元に戻せません。"
+    "deleteProviderMessage": "プロバイダー「{{name}}」を削除してもよろしいですか？この操作は元に戻せません。",
+    "removeProvider": "プロバイダーを解除",
+    "removeProviderMessage": "プロバイダー「{{name}}」を設定から解除してもよろしいですか？\n\n解除後、このプロバイダーは無効になりますが、設定データは CC Switch に保持されます。いつでも再追加できます。"
   },
   "settings": {
     "title": "設定",
@@ -183,9 +191,46 @@
         "title": "コスト計算",
         "description": "各モデルのトークン料金ルールを管理"
       },
+      "globalProxy": {
+        "title": "グローバル送信プロキシ",
+        "description": "CC Switch が外部 API にアクセスする際のプロキシを設定"
+      },
       "data": {
         "title": "データ管理",
         "description": "設定のインポート/エクスポートとバックアップ/復元"
+      },
+      "rectifier": {
+        "title": "整流器",
+        "description": "API リクエストの互換性問題を自動修正",
+        "enabled": "整流器を有効化",
+        "enabledDescription": "マスタースイッチ、オフにするとすべての整流機能が無効になります",
+        "requestGroup": "リクエスト整流",
+        "responseGroup": "レスポンス整流",
+        "thinkingSignature": "Thinking 署名整流",
+        "thinkingSignatureDescription": "Claude API の thinking 署名検証エラーを自動修正"
+      },
+      "logConfig": {
+        "title": "ログ管理",
+        "description": "ログ出力レベルを制御",
+        "enabled": "ログを有効化",
+        "enabledDescription": "マスタースイッチ、オフにするとすべてのログが無効になります",
+        "level": "ログレベル",
+        "levelDescription": "出力する最小ログレベルを設定",
+        "levels": {
+          "error": "エラー",
+          "warn": "警告",
+          "info": "情報",
+          "debug": "デバッグ",
+          "trace": "トレース"
+        },
+        "levelHint": "ログレベルの説明：",
+        "levelDesc": {
+          "error": "重大なエラーのみ",
+          "warn": "エラー + 警告",
+          "info": "一般的な操作情報（デフォルト）",
+          "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
+          "trace": "すべてのログ、最も詳細"
+        }
       }
     },
     "language": "言語",
@@ -227,6 +272,14 @@
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
+    "appVisibility": {
+      "title": "ホームページ表示",
+      "description": "ホームページに表示するアプリを選択",
+      "claudeDesc": "Anthropic Claude Code CLI",
+      "codexDesc": "OpenAI Codex CLI",
+      "geminiDesc": "Google Gemini CLI",
+      "opencodeDesc": "OpenCode CLI"
+    },
     "configDirectoryOverride": "設定ディレクトリの上書き（詳細）",
     "configDirectoryDescription": "WSL などで Claude Code や Codex を使う場合、ここで設定ディレクトリを WSL 側に合わせるとデータを揃えられます。",
     "appConfigDir": "CC Switch 設定ディレクトリ",
@@ -271,12 +324,27 @@
     "restartLater": "後で再起動",
     "restartFailed": "アプリの再起動に失敗しました。手動で閉じて再度開いてください。",
     "devModeRestartHint": "開発モードでは自動再起動をサポートしていません。手動で再起動してください。",
-    "saving": "保存中..."
+    "saving": "保存中...",
+    "globalProxy": {
+      "label": "グローバルプロキシ",
+      "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。空欄で直接接続。",
+      "username": "ユーザー名（任意）",
+      "password": "パスワード（任意）",
+      "test": "接続テスト",
+      "scan": "ローカルプロキシをスキャン",
+      "clear": "クリア",
+      "scanFailed": "スキャンに失敗しました: {{error}}",
+      "saved": "プロキシ設定を保存しました",
+      "saveFailed": "保存に失敗しました: {{error}}",
+      "testSuccess": "接続成功！遅延 {{latency}}ms",
+      "testFailed": "接続に失敗しました: {{error}}"
+    }
   },
   "apps": {
-    "claude": "Claude Code",
+    "claude": "Claude",
     "codex": "Codex",
-    "gemini": "Gemini"
+    "gemini": "Gemini",
+    "opencode": "OpenCode"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
@@ -324,7 +392,8 @@
       "minimax_cn": "MiniMax Coding Plan 特別価格、Starter ¥9.9 から",
       "minimax_en": "MiniMax Coding Plan Black Friday、Starter が月額 $2（80% OFF）",
       "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
-      "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ"
+      "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ",
+      "aigocode": "AIGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -389,6 +458,22 @@
     "testFailed": "速度テストに失敗しました: {{error}}",
     "status": "ステータス: {{code}}"
   },
+  "providerAdvanced": {
+    "testConfig": "モデルテスト設定",
+    "useCustomConfig": "個別設定を使用",
+    "testConfigDesc": "このプロバイダーに個別のモデルテストパラメータを設定します。無効の場合はグローバル設定を使用します。",
+    "testModel": "テストモデル",
+    "testModelPlaceholder": "空白の場合はグローバル設定を使用",
+    "timeoutSecs": "タイムアウト（秒）",
+    "testPrompt": "テストプロンプト",
+    "degradedThreshold": "低下閾値（ミリ秒）",
+    "maxRetries": "最大リトライ回数",
+    "proxyConfig": "プロキシ設定",
+    "useCustomProxy": "個別プロキシを使用",
+    "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
+    "proxyUsername": "ユーザー名（任意）",
+    "proxyPassword": "パスワード（任意）"
+  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
@@ -425,6 +510,36 @@
     "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
     "configMergeFailed": "設定のマージに失敗しました: {{error}}",
     "configReplaceFailed": "設定の置換に失敗しました: {{error}}"
+  },
+  "opencode": {
+    "npmPackage": "API フォーマット",
+    "selectPackage": "API フォーマットを選択",
+    "npmPackageHint": "AI サービスの API フォーマットを選択",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "カスタム API エンドポイント URL",
+    "models": "モデル設定",
+    "modelsHint": "利用可能なモデルとその表示名を設定",
+    "addModel": "モデルを追加",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "noModels": "モデルが設定されていません",
+    "providerKey": "プロバイダーキー",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "設定ファイルの一意の識別子。作成後は変更できません。小文字、数字、ハイフンのみ使用できます。",
+    "providerKeyRequired": "プロバイダーキーを入力してください",
+    "providerKeyDuplicate": "このキーは既に使用されています",
+    "providerKeyInvalid": "無効な形式です。小文字、数字、ハイフンのみ使用できます。",
+    "extraOptions": "追加オプション",
+    "extraOptionsHint": "timeout、setCacheKey などの SDK オプションを設定。値は自動的に適切な型（数値、真偽値など）に変換されます。",
+    "addExtraOption": "追加",
+    "extraOptionKey": "キー名",
+    "extraOptionValue": "値",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValuePlaceholder": "600000",
+    "noExtraOptions": "追加オプションはありません",
+    "noModelOptions": "モデルオプション、+ をクリックして追加",
+    "modelOptionKeyPlaceholder": "provider",
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
   "providerPreset": {
     "label": "プロバイダータイプ",
@@ -555,6 +670,7 @@
     "testFailed": "テストに失敗しました",
     "formatSuccess": "整形に成功しました",
     "formatFailed": "整形に失敗しました",
+    "supportedVariables": "使用可能な変数",
     "variablesHint": "使用可能な変数: {{apiKey}}, {{baseUrl}} | extractor 関数には API 応答の JSON オブジェクトが渡されます",
     "scriptConfig": "リクエスト設定",
     "extractorCode": "抽出コード",
@@ -604,7 +720,8 @@
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
-        "gemini": "Gemini"
+        "gemini": "Gemini",
+        "opencode": "OpenCode"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -912,7 +1029,8 @@
     "apps": {
       "claude": "Claude",
       "codex": "Codex",
-      "gemini": "Gemini"
+      "gemini": "Gemini",
+      "opencode": "OpenCode"
     }
   },
   "deeplink": {
@@ -957,6 +1075,7 @@
     "configDetails": "設定の詳細",
     "configUrl": "設定ファイル URL",
     "configMergeError": "設定ファイルのマージに失敗しました",
+    "primaryEndpoint": "メイン",
     "mcp": {
       "title": "MCP サーバーを一括インポート",
       "targetApps": "ターゲットアプリ",
@@ -1016,6 +1135,20 @@
     "circuitOpen": "サーキットオープン",
     "consecutiveFailures": "{{count}} 回連続失敗"
   },
+  "failover": {
+    "enabled": "{{app}} フェイルオーバーが有効になりました",
+    "disabled": "{{app}} フェイルオーバーが無効になりました",
+    "toggleFailed": "操作に失敗しました: {{detail}}",
+    "inQueue": "キュー内",
+    "addQueue": "追加",
+    "priority": {
+      "tooltip": "フェイルオーバー優先度 {{priority}}"
+    },
+    "tooltip": {
+      "enabled": "{{app}} フェイルオーバーが有効\nキューの優先度（P1→P2→...）で使用します",
+      "disabled": "{{app}} フェイルオーバーを有効にする\nキューの P1 に即時切替し、失敗時は次を順に試行します"
+    }
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "サービスアドレス",
@@ -1058,7 +1191,7 @@
         },
         "listenPort": {
           "label": "リッスンポート",
-          "placeholder": "5000",
+          "placeholder": "15721",
           "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
         },
         "maxRetries": {
@@ -1110,15 +1243,18 @@
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "failover": {
-      "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります"
+      "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります",
+      "autoSwitch": "自動フェイルオーバー",
+      "autoSwitchDescription": "有効にするとキューの P1 に即時切り替え、リクエスト失敗時はキュー内の次のプロバイダーを自動で試行します"
     },
     "failoverQueue": {
       "title": "フェイルオーバーキュー",
       "description": "各アプリのプロバイダーのフェイルオーバー順序を管理します",
-      "info": "現在アクティブなプロバイダーが常に優先されます。リクエストが失敗すると、システムはキュー順に他のプロバイダーを試行します。",
+      "info": "自動フェイルオーバーを有効にすると、キューの優先度順（P1 優先）でプロバイダーを使用します。失敗時はキュー内の次のプロバイダーを順に試行します。",
       "selectProvider": "キューに追加するプロバイダーを選択",
       "noAvailableProviders": "追加できるプロバイダーがありません",
       "empty": "フェイルオーバーキューが空です。自動フェイルオーバーを有効にするにはプロバイダーを追加してください。",
+      "orderHint": "キューの順序はホームのプロバイダー一覧の順序と一致します。ホームでドラッグして順序を変更できます。",
       "dragHint": "ドラッグでフェイルオーバー順序を調整します。番号が小さいほど優先度が高くなります。",
       "toggleEnabled": "有効/無効",
       "addSuccess": "フェイルオーバーキューに追加しました",
@@ -1166,7 +1302,8 @@
     "checkParams": "チェックパラメーター",
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
-    "degradedThreshold": "劣化しきい値（ミリ秒）"
+    "degradedThreshold": "劣化しきい値（ミリ秒）",
+    "testPrompt": "テストプロンプト"
   },
   "proxyConfig": {
     "proxyEnabled": "プロキシ有効",
@@ -1226,17 +1363,5 @@
     "saveAndSyncError": "保存と同期に失敗しました",
     "configJsonPreview": "設定 JSON プレビュー",
     "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
-  },
-  "backup": {
-    "backed": "バックアップ済み",
-    "never": "バックアップなし",
-    "justNow": "たった今",
-    "minutesAgo": "{{count}}分前",
-    "today": "今日{{time}}",
-    "yesterday": "昨日{{time}}",
-    "daysAgo": "{{count}}日前{{time}}",
-    "lastBackup": "最終バックアップ：{{time}}",
-    "size": "サイズ：{{size}}",
-    "count": "{{count}}個のバックアップ"
   }
 }

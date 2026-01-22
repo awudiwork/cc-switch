@@ -9,6 +9,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.10.0] - 2026-01-21
+
+### Feature Release
+
+This release introduces OpenCode support and brings improvements across proxy, usage tracking, and overall UX.
+
+### Added
+
+- **OpenCode Support** - Manage OpenCode providers, MCP servers, and Skills, with first-launch import and full internationalization (#695)
+- **Global Proxy** - Add global proxy settings for outbound network requests (#596)
+- **Claude Rectifier** - Add thinking signature rectifier for Claude API (#595)
+- **Health Check Enhancements** - Configurable prompt and CLI-compatible requests for stream health check (#623)
+- **Per-Provider Config** - Support provider-specific configuration and persistence (#663)
+- **App Visibility Controls** - Show/hide apps and keep tray menu in sync (Gemini hidden by default)
+- **Takeover Compact Mode** - Use a compact AppSwitcher layout when showing 3+ visible apps
+- **Keyboard Shortcut** - Press `ESC` to quickly go back/close panels (#670)
+- **Terminal Improvements** - Provider-specific terminal button, `fnm` path support, and safer cross-platform launching (#564)
+- **WSL Tool Detection** - Detect tool versions in WSL with additional security hardening (#627)
+- **Skills Presets** - Add `baoyu-skills` preset repo and auto-supplement missing default repos
+
+### Changed
+
+- **Proxy Logging** - Simplify proxy log output (#585)
+- **Pricing Editor UX** - Unify pricing edit modal with `FullScreenPanel`
+- **Advanced Settings Layout** - Move rectifier section below failover for better flow
+- **OpenRouter Compat Mode** - Disable OpenRouter compatibility mode by default and hide UI toggle
+
+### Fixed
+
+- **Auto Failover** - Switch to P1 immediately when enabling auto failover
+- **Provider Edit Dialog** - Fix stale data when reopening provider editor after save (#654)
+- **Deeplink** - Support multiple endpoints and prioritize `GOOGLE_GEMINI_BASE_URL` over `GEMINI_BASE_URL` (#597)
+- **MCP (WSL)** - Skip `cmd /c` wrapper for WSL target paths (#592)
+- **Usage Templates** - Add variable hints and validation fixes; prevent config leaking between providers (#628)
+- **Gemini Timeout Format** - Convert timeout params to Gemini CLI format (#580)
+- **UI** - Fix Select dropdown rendering in `FullScreenPanel`; auto-apply default icon color when unset
+- **Usage UI** - Auto-adapt usage block offset based on action buttons width (#613)
+- **Provider Endpoint** - Persist endpoint auto-select state (#611)
+- **Provider Form** - Reset baseUrl and apiKey states when switching presets
+
+---
+
+## [3.9.1] - 2026-01-09
+
+### Bug Fix Release
+
+This release focuses on stability improvements and crash prevention.
+
+### Added
+
+- **Crash Logging** - Panic hook captures crash info to `~/.cc-switch/crash.log` with full stack traces (#562)
+- **Release Logging** - Enable logging for release builds with automatic rotation (keeps 2 most recent files)
+- **AIGoCode Icon** - Added colored icon for AIGoCode provider preset
+
+### Fixed
+
+- **Proxy Panic Prevention** - Graceful degradation when HTTP client initialization fails due to invalid proxy settings; falls back to no_proxy mode (#560)
+- **UTF-8 Safety** - Fix potential panic when masking API keys or truncating logs containing multi-byte characters (Chinese, emoji, etc.) (#560)
+- **Default Proxy Port** - Change default port from 5000 to 15721 to avoid conflict with macOS AirPlay Receiver (#560)
+- **Windows Title** - Display "CC Switch" instead of default "Tauri app" in window title
+- **Windows/Linux Spacing** - Remove extra 28px blank space below native titlebar introduced in v3.9.0
+- **Flatpak Tray Icon** - Bundle libayatana-appindicator for tray icon support on Flatpak (#556)
+- **Provider Preset** - Correct casing from "AiGoCode" to "AIGoCode" to match official branding
+
+---
+
 ## [3.9.0] - 2026-01-07
 
 ### Stable Release

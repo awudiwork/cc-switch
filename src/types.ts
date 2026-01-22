@@ -52,6 +52,7 @@ export interface UsageScript {
   language: "javascript"; // 脚本语言
   code: string; // 脚本代码（JSON 格式配置）
   timeout?: number; // 超时时间（秒，默认 10）
+  templateType?: "custom" | "general" | "newapi"; // 模板类型（用于后端判断验证规则）
   apiKey?: string; // 用量查询专用的 API Key（通用模板使用）
   baseUrl?: string; // 用量查询专用的 Base URL（通用和 NewAPI 模板使用）
   accessToken?: string; // 访问令牌（NewAPI 模板使用）
@@ -86,16 +87,62 @@ export interface UsageResult {
   error?: string;
 }
 
+// 供应商单独的模型测试配置
+export interface ProviderTestConfig {
+  // 是否启用单独配置（false 时使用全局配置）
+  enabled: boolean;
+  // 测试用的模型名称（覆盖全局配置）
+  testModel?: string;
+  // 超时时间（秒）
+  timeoutSecs?: number;
+  // 测试提示词
+  testPrompt?: string;
+  // 降级阈值（毫秒）
+  degradedThresholdMs?: number;
+  // 最大重试次数
+  maxRetries?: number;
+}
+
+// 供应商单独的代理配置
+export interface ProviderProxyConfig {
+  // 是否启用单独配置（false 时使用全局/系统代理）
+  enabled: boolean;
+  // 代理类型：http, https, socks5
+  proxyType?: "http" | "https" | "socks5";
+  // 代理主机
+  proxyHost?: string;
+  // 代理端口
+  proxyPort?: number;
+  // 代理用户名（可选）
+  proxyUsername?: string;
+  // 代理密码（可选）
+  proxyPassword?: string;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 用量查询脚本配置
   usage_script?: UsageScript;
+  // 请求地址管理：测速后自动选择最佳端点
+  endpointAutoSelect?: boolean;
   // 是否为官方合作伙伴
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
   partnerPromotionKey?: string;
+  // 供应商单独的模型测试配置
+  testConfig?: ProviderTestConfig;
+  // 供应商单独的代理配置
+  proxyConfig?: ProviderProxyConfig;
+}
+
+// 主页面显示的应用配置
+export interface VisibleApps {
+  claude: boolean;
+  codex: boolean;
+  gemini: boolean;
+  opencode: boolean;
 }
 
 // 应用设置类型（用于设置对话框与 Tauri API）
@@ -115,6 +162,9 @@ export interface Settings {
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 
+  // 主页面显示的应用（默认全部显示）
+  visibleApps?: VisibleApps;
+
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;
@@ -122,6 +172,8 @@ export interface Settings {
   codexConfigDir?: string;
   // 覆盖 Gemini 配置目录（可选）
   geminiConfigDir?: string;
+  // 覆盖 OpenCode 配置目录（可选）
+  opencodeConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -153,6 +205,7 @@ export interface McpApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  opencode: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -244,3 +297,47 @@ export interface UniversalProvider {
 
 // 统一供应商映射（id -> UniversalProvider）
 export type UniversalProvidersMap = Record<string, UniversalProvider>;
+
+// ============================================================================
+// OpenCode 专属配置（v3.9.2+）
+// ============================================================================
+
+// OpenCode 模型配置
+export interface OpenCodeModel {
+  name: string;
+  limit?: {
+    context?: number;
+    output?: number;
+  };
+  options?: Record<string, unknown>; // 模型级别额外选项（provider 路由等）
+}
+
+// OpenCode 供应商选项
+export interface OpenCodeProviderOptions {
+  baseURL?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+  // 支持额外选项（timeout, setCacheKey 等）
+  [key: string]: unknown;
+}
+
+// OpenCode 供应商配置（settings_config 结构）
+export interface OpenCodeProviderConfig {
+  npm: string; // AI SDK 包名，如 "@ai-sdk/openai-compatible"
+  name?: string; // 供应商显示名称
+  options: OpenCodeProviderOptions;
+  models: Record<string, OpenCodeModel>;
+}
+
+// OpenCode MCP 服务器配置（与统一格式不同）
+export interface OpenCodeMcpServerSpec {
+  type: "local" | "remote";
+  // local 类型字段
+  command?: string[]; // 与统一格式不同：命令和参数合并为数组
+  environment?: Record<string, string>; // 与统一格式不同：使用 environment 而非 env
+  // remote 类型字段
+  url?: string;
+  headers?: Record<string, string>;
+  // 通用字段
+  enabled?: boolean;
+}

@@ -7,15 +7,15 @@ use super::{
     error::*,
     failover_switch::FailoverSwitchManager,
     provider_router::ProviderRouter,
-    providers::{get_adapter, ProviderAdapter},
-    types::ProxyStatus,
+    providers::{get_adapter, ProviderAdapter, ProviderType},
+    thinking_rectifier::{rectify_anthropic_request, should_rectify_thinking_signature},
+    types::{ProxyStatus, RectifierConfig},
     ProxyError,
 };
 use crate::{app_config::AppType, provider::Provider};
-use reqwest::{Client, Response};
+use reqwest::Response;
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Headers 黑名单 - 不透传到上游的 Headers
@@ -28,6 +28,7 @@ const HEADER_BLACKLIST: &[&str] = &[
     // 认证类（会被覆盖）
     "authorization",
     "x-api-key",
+    "x-goog-api-key",
     // 连接类（由 HTTP 客户端管理）
     "host",
     "content-length",
@@ -81,7 +82,6 @@ pub struct ForwardError {
 }
 
 pub struct RequestForwarder {
-    client: Client,
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
     status: Arc<RwLock<ProxyStatus>>,
@@ -92,6 +92,10 @@ pub struct RequestForwarder {
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
+    /// 整流器配置
+    rectifier_config: RectifierConfig,
+    /// 非流式请求超时（秒）
+    non_streaming_timeout: std::time::Duration,
 }
 
 impl RequestForwarder {
@@ -106,32 +110,17 @@ impl RequestForwarder {
         current_provider_id_at_start: String,
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
+        rectifier_config: RectifierConfig,
     ) -> Self {
-        // 全局超时设置为 1800 秒（30 分钟），确保业务层超时配置能正常工作
-        // 参考 Claude Code Hub 的 undici 全局超时设计
-        const GLOBAL_TIMEOUT_SECS: u64 = 1800;
-
-        let mut client_builder = Client::builder();
-        if non_streaming_timeout > 0 {
-            // 使用配置的非流式超时
-            client_builder = client_builder.timeout(Duration::from_secs(non_streaming_timeout));
-        } else {
-            // 禁用超时时使用全局超时作为保底
-            client_builder = client_builder.timeout(Duration::from_secs(GLOBAL_TIMEOUT_SECS));
-        }
-
-        let client = client_builder
-            .build()
-            .expect("Failed to create HTTP client");
-
         Self {
-            client,
             router,
             status,
             current_providers,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
+            rectifier_config,
+            non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
 
@@ -147,7 +136,7 @@ impl RequestForwarder {
         &self,
         app_type: &AppType,
         endpoint: &str,
-        body: Value,
+        mut body: Value,
         headers: axum::http::HeaderMap,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
@@ -162,15 +151,12 @@ impl RequestForwarder {
             });
         }
 
-        log::info!(
-            "[{}] 故障转移链: {} 个可用供应商",
-            app_type_str,
-            providers.len()
-        );
-
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
+
+        // 整流器重试标记：确保整流最多触发一次
+        let mut rectifier_retried = false;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
@@ -190,24 +176,10 @@ impl RequestForwarder {
             };
 
             if !allowed {
-                log::debug!(
-                    "[{}] Provider {} 熔断器拒绝本次请求，跳过",
-                    app_type_str,
-                    provider.name
-                );
                 continue;
             }
 
             attempted_providers += 1;
-
-            log::info!(
-                "[{}] 尝试 {}/{} - 使用Provider: {} (sort_index: {})",
-                app_type_str,
-                attempted_providers,
-                providers.len(),
-                provider.name,
-                provider.sort_index.unwrap_or(999999)
-            );
 
             // 更新状态中的当前Provider信息
             {
@@ -218,18 +190,14 @@ impl RequestForwarder {
                 status.last_request_at = Some(chrono::Utc::now().to_rfc3339());
             }
 
-            let start = Instant::now();
-
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
                 .forward(provider, endpoint, &body, &headers, adapter.as_ref())
                 .await
             {
                 Ok(response) => {
-                    let latency = start.elapsed().as_millis() as u64;
-
                     // 成功：记录成功并更新熔断器
-                    if let Err(e) = self
+                    let _ = self
                         .router
                         .record_result(
                             &provider.id,
@@ -238,10 +206,7 @@ impl RequestForwarder {
                             true,
                             None,
                         )
-                        .await
-                    {
-                        log::warn!("Failed to record success: {e}");
-                    }
+                        .await;
 
                     // 更新当前应用类型使用的 provider
                     {
@@ -261,12 +226,6 @@ impl RequestForwarder {
                             self.current_provider_id_at_start.as_str() != provider.id.as_str();
                         if should_switch {
                             status.failover_count += 1;
-                            log::info!(
-                                "[{}] 代理目标已切换到 Provider: {} (耗时: {}ms)",
-                                app_type_str,
-                                provider.name,
-                                latency
-                            );
 
                             // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
                             let fm = self.failover_manager.clone();
@@ -276,10 +235,7 @@ impl RequestForwarder {
                             let at = app_type_str.to_string();
 
                             tokio::spawn(async move {
-                                if let Err(e) = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await
-                                {
-                                    log::error!("[Failover] 切换供应商失败: {e}");
-                                }
+                                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
                             });
                         }
                         // 重新计算成功率
@@ -290,23 +246,213 @@ impl RequestForwarder {
                         }
                     }
 
-                    log::info!(
-                        "[{}] 请求成功 - Provider: {} - {}ms",
-                        app_type_str,
-                        provider.name,
-                        latency
-                    );
-
                     return Ok(ForwardResult {
                         response,
                         provider: provider.clone(),
                     });
                 }
                 Err(e) => {
-                    let latency = start.elapsed().as_millis() as u64;
+                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
+                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
+                    let is_anthropic_provider = matches!(
+                        provider_type,
+                        ProviderType::Claude | ProviderType::ClaudeAuth
+                    );
+
+                    if is_anthropic_provider {
+                        let error_message = extract_error_message(&e);
+                        if should_rectify_thinking_signature(
+                            error_message.as_deref(),
+                            &self.rectifier_config,
+                        ) {
+                            // 已经重试过：直接返回错误（不可重试客户端错误）
+                            if rectifier_retried {
+                                log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
+                                // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                let mut status = self.status.write().await;
+                                status.failed_requests += 1;
+                                status.last_error = Some(e.to_string());
+                                if status.total_requests > 0 {
+                                    status.success_rate = (status.success_requests as f32
+                                        / status.total_requests as f32)
+                                        * 100.0;
+                                }
+                                return Err(ForwardError {
+                                    error: e,
+                                    provider: Some(provider.clone()),
+                                });
+                            }
+
+                            // 首次触发：整流请求体
+                            let rectified = rectify_anthropic_request(&mut body);
+
+                            // 整流未生效：直接返回错误（不可重试客户端错误）
+                            if !rectified.applied {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-006] 整流器触发但无可整流内容，不做无意义重试"
+                                );
+                                // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                let mut status = self.status.write().await;
+                                status.failed_requests += 1;
+                                status.last_error = Some(e.to_string());
+                                if status.total_requests > 0 {
+                                    status.success_rate = (status.success_requests as f32
+                                        / status.total_requests as f32)
+                                        * 100.0;
+                                }
+                                return Err(ForwardError {
+                                    error: e,
+                                    provider: Some(provider.clone()),
+                                });
+                            }
+
+                            log::info!(
+                                "[{}] [RECT-001] thinking 签名整流器触发, 移除 {} thinking blocks, {} redacted_thinking blocks, {} signature fields",
+                                app_type_str,
+                                rectified.removed_thinking_blocks,
+                                rectified.removed_redacted_thinking_blocks,
+                                rectified.removed_signature_fields
+                            );
+
+                            // 标记已重试（当前逻辑下重试后必定 return，保留标记以备将来扩展）
+                            let _ = std::mem::replace(&mut rectifier_retried, true);
+
+                            // 使用同一供应商重试（不计入熔断器）
+                            match self
+                                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                .await
+                            {
+                                Ok(response) => {
+                                    log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
+                                    // 记录成功
+                                    let _ = self
+                                        .router
+                                        .record_result(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            true,
+                                            None,
+                                        )
+                                        .await;
+
+                                    // 更新当前应用类型使用的 provider
+                                    {
+                                        let mut current_providers =
+                                            self.current_providers.write().await;
+                                        current_providers.insert(
+                                            app_type_str.to_string(),
+                                            (provider.id.clone(), provider.name.clone()),
+                                        );
+                                    }
+
+                                    // 更新成功统计
+                                    {
+                                        let mut status = self.status.write().await;
+                                        status.success_requests += 1;
+                                        status.last_error = None;
+                                        let should_switch =
+                                            self.current_provider_id_at_start.as_str()
+                                                != provider.id.as_str();
+                                        if should_switch {
+                                            status.failover_count += 1;
+
+                                            // 异步触发供应商切换，更新 UI/托盘
+                                            let fm = self.failover_manager.clone();
+                                            let ah = self.app_handle.clone();
+                                            let pid = provider.id.clone();
+                                            let pname = provider.name.clone();
+                                            let at = app_type_str.to_string();
+
+                                            tokio::spawn(async move {
+                                                let _ = fm
+                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                    .await;
+                                            });
+                                        }
+                                        if status.total_requests > 0 {
+                                            status.success_rate = (status.success_requests as f32
+                                                / status.total_requests as f32)
+                                                * 100.0;
+                                        }
+                                    }
+
+                                    return Ok(ForwardResult {
+                                        response,
+                                        provider: provider.clone(),
+                                    });
+                                }
+                                Err(retry_err) => {
+                                    // 整流重试仍失败：区分错误类型决定是否记录熔断器
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
+                                    );
+
+                                    // 区分错误类型：Provider 问题记录失败，客户端问题仅释放 permit
+                                    let is_provider_error = match &retry_err {
+                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
+                                            true
+                                        }
+                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
+                                        _ => false,
+                                    };
+
+                                    if is_provider_error {
+                                        // Provider 问题：记录失败到熔断器
+                                        let _ = self
+                                            .router
+                                            .record_result(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                                false,
+                                                Some(retry_err.to_string()),
+                                            )
+                                            .await;
+                                    } else {
+                                        // 客户端问题：仅释放 permit，不记录熔断器
+                                        self.router
+                                            .release_permit_neutral(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                            )
+                                            .await;
+                                    }
+
+                                    let mut status = self.status.write().await;
+                                    status.failed_requests += 1;
+                                    status.last_error = Some(retry_err.to_string());
+                                    if status.total_requests > 0 {
+                                        status.success_rate = (status.success_requests as f32
+                                            / status.total_requests as f32)
+                                            * 100.0;
+                                    }
+                                    return Err(ForwardError {
+                                        error: retry_err,
+                                        provider: Some(provider.clone()),
+                                    });
+                                }
+                            }
+                        }
+                    }
 
                     // 失败：记录失败并更新熔断器
-                    if let Err(record_err) = self
+                    let _ = self
                         .router
                         .record_result(
                             &provider.id,
@@ -315,10 +461,7 @@ impl RequestForwarder {
                             false,
                             Some(e.to_string()),
                         )
-                        .await
-                    {
-                        log::warn!("Failed to record failure: {record_err}");
-                    }
+                        .await;
 
                     // 分类错误
                     let category = self.categorize_proxy_error(&e);
@@ -333,11 +476,11 @@ impl RequestForwarder {
                             }
 
                             log::warn!(
-                                "[{}] Provider {} 失败（可重试）: {} - {}ms",
+                                "[{}] [FWD-001] Provider {} 失败，切换下一个 ({}/{})",
                                 app_type_str,
                                 provider.name,
-                                e,
-                                latency
+                                attempted_providers,
+                                providers.len()
                             );
 
                             last_error = Some(e);
@@ -357,12 +500,6 @@ impl RequestForwarder {
                                         * 100.0;
                                 }
                             }
-                            log::error!(
-                                "[{}] Provider {} 失败（不可重试）: {}",
-                                app_type_str,
-                                provider.name,
-                                e
-                            );
                             return Err(ForwardError {
                                 error: e,
                                 provider: Some(provider.clone()),
@@ -401,11 +538,7 @@ impl RequestForwarder {
             }
         }
 
-        log::error!(
-            "[{}] 所有 {} 个供应商都失败了",
-            app_type_str,
-            providers.len()
-        );
+        log::warn!("[{app_type_str}] [FWD-002] 所有 Provider 均失败");
 
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
@@ -424,7 +557,6 @@ impl RequestForwarder {
     ) -> Result<Response, ProxyError> {
         // 使用适配器提取 base_url
         let base_url = adapter.extract_base_url(provider)?;
-        log::info!("[{}] base_url: {}", adapter.name(), base_url);
 
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
@@ -439,36 +571,13 @@ impl RequestForwarder {
         // 使用适配器构建 URL
         let url = adapter.build_url(&base_url, effective_endpoint);
 
-        // 记录原始请求 JSON
-        log::info!(
-            "[{}] ====== 请求开始 ======\n>>> 原始请求 JSON:\n{}",
-            adapter.name(),
-            serde_json::to_string_pretty(body).unwrap_or_else(|_| body.to_string())
-        );
-
         // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, mapped_model) =
+        let (mapped_body, _original_model, _mapped_model) =
             super::model_mapper::apply_model_mapping(body.clone(), provider);
-
-        if let Some(ref mapped) = mapped_model {
-            log::info!(
-                "[{}] >>> 模型映射后的请求 JSON:\n{}",
-                adapter.name(),
-                serde_json::to_string_pretty(&mapped_body).unwrap_or_default()
-            );
-            log::info!("[{}] 模型已映射到: {}", adapter.name(), mapped);
-        }
 
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
-            log::info!("[{}] 转换请求格式 (Anthropic → OpenAI)", adapter.name());
-            let transformed = adapter.transform_request(mapped_body, provider)?;
-            log::info!(
-                "[{}] >>> 转换后的请求 JSON:\n{}",
-                adapter.name(),
-                serde_json::to_string_pretty(&transformed).unwrap_or_default()
-            );
-            transformed
+            adapter.transform_request(mapped_body, provider)?
         } else {
             mapped_body
         };
@@ -477,69 +586,27 @@ impl RequestForwarder {
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
 
-        // ========== 请求体日志（截断显示） ==========
-        let body_str = serde_json::to_string_pretty(&filtered_body)
-            .unwrap_or_else(|_| filtered_body.to_string());
-        let body_preview = if body_str.len() > 2000 {
-            format!(
-                "{}...\n[截断，总长度: {} 字符]",
-                &body_str[..2000],
-                body_str.len()
-            )
-        } else {
-            body_str
-        };
-        log::info!(
-            "[{}] ====== 最终请求体 ======\n{}",
-            adapter.name(),
-            body_preview
-        );
+        // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
+        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
+        let client = super::http_client::get_for_provider(proxy_config);
+        let mut request = client.post(&url);
 
-        log::info!(
-            "[{}] 转发请求: {} -> {}",
-            adapter.name(),
-            provider.name,
-            url
-        );
-
-        // 构建请求
-        let mut request = self.client.post(&url);
-
-        // ========== 详细 Headers 日志 ==========
-        log::info!("[{}] ====== 客户端原始 Headers ======", adapter.name());
-        for (key, value) in headers {
-            log::info!(
-                "[{}]   {}: {:?}",
-                adapter.name(),
-                key.as_str(),
-                value.to_str().unwrap_or("<binary>")
-            );
+        // 只有当 timeout > 0 时才设置请求超时
+        // Duration::ZERO 在 reqwest 中表示"立刻超时"而不是"禁用超时"
+        // 故障转移关闭时会传入 0，此时应该使用 client 的默认超时（600秒）
+        if !self.non_streaming_timeout.is_zero() {
+            request = request.timeout(self.non_streaming_timeout);
         }
 
         // 过滤黑名单 Headers，保护隐私并避免冲突
-        let mut filtered_headers: Vec<String> = Vec::new();
-        let mut passed_headers: Vec<(String, String)> = Vec::new();
-
         for (key, value) in headers {
-            let key_str = key.as_str().to_lowercase();
-            if HEADER_BLACKLIST.contains(&key_str.as_str()) {
-                filtered_headers.push(key_str);
+            if HEADER_BLACKLIST
+                .iter()
+                .any(|h| key.as_str().eq_ignore_ascii_case(h))
+            {
                 continue;
             }
-            let value_str = value.to_str().unwrap_or("<binary>").to_string();
-            passed_headers.push((key.as_str().to_string(), value_str.clone()));
             request = request.header(key, value);
-        }
-
-        if !filtered_headers.is_empty() {
-            log::info!(
-                "[{}] ====== 被过滤的 Headers ({}) ======",
-                adapter.name(),
-                filtered_headers.len()
-            );
-            for h in &filtered_headers {
-                log::info!("[{}]   - {}", adapter.name(), h);
-            }
         }
 
         // 处理 anthropic-beta Header（仅 Claude）
@@ -564,55 +631,27 @@ impl RequestForwarder {
                 CLAUDE_CODE_BETA.to_string()
             };
             request = request.header("anthropic-beta", &beta_value);
-            passed_headers.push(("anthropic-beta".to_string(), beta_value.clone()));
-            log::info!("[{}] 设置 anthropic-beta: {}", adapter.name(), beta_value);
         }
 
         // 客户端 IP 透传（默认开启）
         if let Some(xff) = headers.get("x-forwarded-for") {
             if let Ok(xff_str) = xff.to_str() {
                 request = request.header("x-forwarded-for", xff_str);
-                passed_headers.push(("x-forwarded-for".to_string(), xff_str.to_string()));
-                log::debug!("[{}] 透传 x-forwarded-for: {}", adapter.name(), xff_str);
             }
         }
         if let Some(real_ip) = headers.get("x-real-ip") {
             if let Ok(real_ip_str) = real_ip.to_str() {
                 request = request.header("x-real-ip", real_ip_str);
-                passed_headers.push(("x-real-ip".to_string(), real_ip_str.to_string()));
-                log::debug!("[{}] 透传 x-real-ip: {}", adapter.name(), real_ip_str);
             }
         }
 
         // 禁用压缩，避免 gzip 流式响应解析错误
         // 参考 CCH: undici 在连接提前关闭时会对不完整的 gzip 流抛出错误
         request = request.header("accept-encoding", "identity");
-        passed_headers.push(("accept-encoding".to_string(), "identity".to_string()));
 
         // 使用适配器添加认证头
         if let Some(auth) = adapter.extract_auth(provider) {
-            log::debug!(
-                "[{}] 使用认证: {:?} (key: {})",
-                adapter.name(),
-                auth.strategy,
-                auth.masked_key()
-            );
             request = adapter.add_auth_headers(request, &auth);
-            // 记录认证头（脱敏）
-            passed_headers.push((
-                "authorization".to_string(),
-                format!("Bearer {}...", &auth.api_key[..8.min(auth.api_key.len())]),
-            ));
-            passed_headers.push((
-                "x-api-key".to_string(),
-                format!("{}...", &auth.api_key[..8.min(auth.api_key.len())]),
-            ));
-        } else {
-            log::error!(
-                "[{}] 未找到 API Key！Provider: {}",
-                adapter.name(),
-                provider.name
-            );
         }
 
         // anthropic-version 统一处理（仅 Claude）：优先使用客户端的版本号，否则使用默认值
@@ -623,28 +662,21 @@ impl RequestForwarder {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("2023-06-01");
             request = request.header("anthropic-version", version_str);
-            passed_headers.push(("anthropic-version".to_string(), version_str.to_string()));
-            log::info!(
-                "[{}] 设置 anthropic-version: {}",
-                adapter.name(),
-                version_str
+        }
+
+        // 输出请求信息日志
+        let tag = adapter.name();
+        log::debug!("[{tag}] >>> 请求 URL: {url}");
+        if let Ok(body_str) = serde_json::to_string(&filtered_body) {
+            log::debug!(
+                "[{tag}] >>> 请求体内容 ({}字节): {}",
+                body_str.len(),
+                body_str
             );
         }
 
-        // ========== 最终发送的 Headers 日志 ==========
-        log::info!(
-            "[{}] ====== 最终发送的 Headers ({}) ======",
-            adapter.name(),
-            passed_headers.len()
-        );
-        for (k, v) in &passed_headers {
-            log::info!("[{}]   {}: {}", adapter.name(), k, v);
-        }
-
         // 发送请求
-        log::info!("[{}] 发送请求到: {}", adapter.name(), url);
         let response = request.json(&filtered_body).send().await.map_err(|e| {
-            log::error!("[{}] 请求失败: {}", adapter.name(), e);
             if e.is_timeout() {
                 ProxyError::Timeout(format!("请求超时: {e}"))
             } else if e.is_connect() {
@@ -656,19 +688,12 @@ impl RequestForwarder {
 
         // 检查响应状态
         let status = response.status();
-        log::info!("[{}] 响应状态: {}", adapter.name(), status);
 
         if status.is_success() {
             Ok(response)
         } else {
             let status_code = status.as_u16();
             let body_text = response.text().await.ok();
-            log::error!(
-                "[{}] 上游错误 ({}): {:?}",
-                adapter.name(),
-                status_code,
-                body_text
-            );
 
             Err(ProxyError::UpstreamError {
                 status: status_code,
@@ -697,5 +722,13 @@ impl RequestForwarder {
             // 其他错误（数据库/内部错误等）：不是换供应商能解决的问题
             _ => ErrorCategory::NonRetryable,
         }
+    }
+}
+
+/// 从 ProxyError 中提取错误消息
+fn extract_error_message(error: &ProxyError) -> Option<String> {
+    match error {
+        ProxyError::UpstreamError { body, .. } => body.clone(),
+        _ => Some(error.to_string()),
     }
 }

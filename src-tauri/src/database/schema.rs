@@ -58,7 +58,7 @@ impl Database {
             id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL,
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-            enabled_gemini BOOLEAN NOT NULL DEFAULT 0
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -85,6 +85,7 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0,
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0
         )",
             [],
@@ -112,7 +113,7 @@ impl Database {
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
-            listen_port INTEGER NOT NULL DEFAULT 5000, enable_logging INTEGER NOT NULL DEFAULT 1,
+            listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
@@ -253,7 +254,7 @@ impl Database {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN listen_port INTEGER NOT NULL DEFAULT 5000",
+            "ALTER TABLE proxy_config ADD COLUMN listen_port INTEGER NOT NULL DEFAULT 15721",
             [],
         );
         let _ = conn.execute(
@@ -345,6 +346,11 @@ impl Database {
                         log::info!("迁移数据库从 v2 到 v3（Skills 统一管理架构）");
                         Self::migrate_v2_to_v3(conn)?;
                         Self::set_user_version(conn, 3)?;
+                    }
+                    3 => {
+                        log::info!("迁移数据库从 v3 到 v4（OpenCode 支持）");
+                        Self::migrate_v3_to_v4(conn)?;
+                        Self::set_user_version(conn, 4)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -469,7 +475,7 @@ impl Database {
                 conn,
                 "proxy_config",
                 "listen_port",
-                "INTEGER NOT NULL DEFAULT 5000",
+                "INTEGER NOT NULL DEFAULT 15721",
             )?;
             Self::add_column_if_missing(
                 conn,
@@ -664,7 +670,7 @@ impl Database {
         conn.execute("CREATE TABLE proxy_config_new (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
-            listen_port INTEGER NOT NULL DEFAULT 5000, enable_logging INTEGER NOT NULL DEFAULT 1,
+            listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
@@ -846,6 +852,30 @@ impl Database {
              注意：旧的安装记录已清除，首次启动时将自动扫描文件系统重建数据。"
         );
 
+        Ok(())
+    }
+
+    /// v3 -> v4 迁移：添加 OpenCode 支持
+    ///
+    /// 为 mcp_servers 和 skills 表添加 enabled_opencode 列。
+    fn migrate_v3_to_v4(conn: &Connection) -> Result<(), AppError> {
+        // 为 mcp_servers 表添加 enabled_opencode 列
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_opencode",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        // 为 skills 表添加 enabled_opencode 列
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_opencode",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        log::info!("v3 -> v4 迁移完成：已添加 OpenCode 支持");
         Ok(())
     }
 

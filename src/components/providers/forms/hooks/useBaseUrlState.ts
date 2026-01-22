@@ -6,7 +6,7 @@ import {
 import type { ProviderCategory } from "@/types";
 
 interface UseBaseUrlStateProps {
-  appType: "claude" | "codex" | "gemini";
+  appType: "claude" | "codex" | "gemini" | "opencode";
   category: ProviderCategory | undefined;
   settingsConfig: string;
   codexConfig?: string;
@@ -41,8 +41,9 @@ export function useBaseUrlState({
     try {
       const config = JSON.parse(settingsConfig || "{}");
       const envUrl: unknown = config?.env?.ANTHROPIC_BASE_URL;
-      if (typeof envUrl === "string" && envUrl && envUrl.trim() !== baseUrl) {
-        setBaseUrl(envUrl.trim());
+      const nextUrl = typeof envUrl === "string" ? envUrl.trim() : "";
+      if (nextUrl !== baseUrl) {
+        setBaseUrl(nextUrl);
       }
     } catch {
       // ignore

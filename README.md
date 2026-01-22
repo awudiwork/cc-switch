@@ -2,7 +2,7 @@
 
 # All-in-One Assistant for Claude Code, Codex & Gemini CLI
 
-[![Version](https://img.shields.io/badge/version-3.9.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.10.0-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![Downloads](https://img.shields.io/endpoint?url=https://api.pinstudios.net/api/badges/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
@@ -52,7 +52,7 @@ This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.GLM 
 
 ## Features
 
-### Current Version: v3.9.0 | [Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-note-v3.9.0-en.md)
+### Current Version: v3.10.0 | [Full Changelog](CHANGELOG.md) | [Release Notes](docs/release-note-v3.9.0-en.md)
 
 **v3.8.0 Major Update (2025-11-28)**
 
@@ -181,7 +181,7 @@ Download `CC-Switch-v{version}-macOS.zip` from the [Releases](../../releases) pa
 
 > **Note**: Since the author doesn't have an Apple Developer account, you may see an "unidentified developer" warning on first launch. Please close it first, then go to "System Settings" → "Privacy & Security" → click "Open Anyway", and you'll be able to open it normally afterwards.
 
-### ArchLinux 用户
+### Arch Linux Users
 
 **Install via paru (Recommended)**
 

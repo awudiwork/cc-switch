@@ -368,6 +368,10 @@ impl ProxyService {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features
+                return Err("OpenCode 不支持代理功能".to_string());
+            }
         };
 
         self.sync_live_config_to_provider(app_type, &live_config)
@@ -441,8 +445,21 @@ impl ProxyService {
                                     }
                                     None => {
                                         // 至少写入一份可用的 Token
-                                        provider.settings_config["env"] =
-                                            json!({ token_key: token });
+                                        if provider.settings_config.is_null() {
+                                            provider.settings_config = json!({});
+                                        }
+
+                                        if let Some(root) = provider.settings_config.as_object_mut()
+                                        {
+                                            root.insert(
+                                                "env".to_string(),
+                                                json!({ token_key: token }),
+                                            );
+                                        } else {
+                                            log::warn!(
+                                                "Claude provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                            );
+                                        }
                                     }
                                 }
 
@@ -485,9 +502,20 @@ impl ProxyService {
                             {
                                 auth_obj.insert("OPENAI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["auth"] = json!({
-                                    "OPENAI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "auth".to_string(),
+                                        json!({ "OPENAI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Codex provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -526,9 +554,20 @@ impl ProxyService {
                             {
                                 env_obj.insert("GEMINI_API_KEY".to_string(), json!(token));
                             } else {
-                                provider.settings_config["env"] = json!({
-                                    "GEMINI_API_KEY": token
-                                });
+                                if provider.settings_config.is_null() {
+                                    provider.settings_config = json!({});
+                                }
+
+                                if let Some(root) = provider.settings_config.as_object_mut() {
+                                    root.insert(
+                                        "env".to_string(),
+                                        json!({ "GEMINI_API_KEY": token }),
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "Gemini provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
+                                    );
+                                }
                             }
 
                             if let Err(e) = self.db.update_provider_settings_config(
@@ -545,6 +584,9 @@ impl ProxyService {
                         }
                     }
                 }
+            }
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features, skip silently
             }
         }
 
@@ -724,6 +766,10 @@ impl ProxyService {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features
+                return Err("OpenCode 不支持代理功能".to_string());
+            }
         };
 
         let json_str = serde_json::to_string(&config)
@@ -932,6 +978,10 @@ impl ProxyService {
                 self.write_gemini_live(&live_config)?;
                 log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
             }
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features
+                return Err("OpenCode 不支持代理功能".to_string());
+            }
         }
 
         Ok(())
@@ -1015,6 +1065,9 @@ impl ProxyService {
                     let _ = self.write_gemini_live(&live_config);
                 }
             }
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features, skip silently
+            }
         }
 
         Ok(())
@@ -1046,6 +1099,9 @@ impl ProxyService {
                     self.write_gemini_live(&config)?;
                     log::info!("Gemini Live 配置已恢复");
                 }
+            }
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features, skip silently
             }
         }
 
@@ -1126,6 +1182,10 @@ impl ProxyService {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features
+                Err("OpenCode 不支持代理功能".to_string())
+            }
         }
     }
 
@@ -1143,6 +1203,10 @@ impl ProxyService {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,
             },
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy takeover
+                false
+            }
         }
     }
 
@@ -1182,6 +1246,10 @@ impl ProxyService {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
+            AppType::OpenCode => {
+                // OpenCode doesn't support proxy features
+                Ok(())
+            }
         }
     }
 
@@ -1462,13 +1530,45 @@ impl ProxyService {
         app_type: &str,
         provider_id: &str,
     ) -> Result<(), String> {
-        // 更新数据库中的 is_current 标记
+        // 代理模式切换供应商（热切换）：
+        // - 更新 SSOT（数据库 is_current）
+        // - 同步本地 settings（设备级 current_provider_*）
+        // - 若该应用正处于接管模式，则同步更新 Live 备份（用于停止代理时恢复）
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
 
         self.db
             .set_current_provider(app_type_enum.as_str(), provider_id)
             .map_err(|e| format!("更新当前供应商失败: {e}"))?;
+
+        // 同步本地 settings（设备级优先）
+        crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
+            .map_err(|e| format!("更新本地当前供应商失败: {e}"))?;
+
+        // 仅在确实处于接管状态时才更新 Live 备份，避免无接管时误写覆盖 Live
+        let has_backup = self
+            .db
+            .get_live_backup(app_type_enum.as_str())
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        let live_taken_over = self.detect_takeover_in_live_config_for_app(&app_type_enum);
+
+        if let Ok(Some(provider)) = self.db.get_provider_by_id(provider_id, app_type) {
+            // 同步更新 Live 备份（用于 stop_with_restore 恢复）
+            if has_backup || live_taken_over {
+                self.update_live_backup_from_provider(app_type, &provider)
+                    .await?;
+            }
+
+            // 同步更新 ProxyStatus.active_targets（用于 UI 立即反映切换目标）
+            if let Some(server) = self.server.read().await.as_ref() {
+                server
+                    .set_active_target(app_type_enum.as_str(), &provider.id, &provider.name)
+                    .await;
+            }
+        }
 
         log::info!("代理模式：已切换 {app_type} 的目标供应商为 {provider_id}");
         Ok(())
@@ -1526,7 +1626,30 @@ impl ProxyService {
         if !path.exists() {
             return Err("Claude 配置文件不存在".to_string());
         }
-        read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))
+
+        let mut value: Value =
+            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
+
+        if value.is_null() {
+            value = json!({});
+        }
+
+        if !value.is_object() {
+            let kind = match &value {
+                Value::Null => "null",
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            };
+            return Err(format!(
+                "Claude 配置文件格式错误：根节点必须是 JSON 对象（当前为 {kind}），路径: {}",
+                path.display()
+            ));
+        }
+
+        Ok(value)
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
@@ -1966,5 +2089,67 @@ model = "gpt-5.1-codex"
             !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
             "should not add ANTHROPIC_AUTH_TOKEN when absent"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_proxy_target_updates_live_backup_when_taken_over() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "a-key"
+                }
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "b-key"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+
+        // 模拟“已接管”状态：存在 Live 备份（内容不重要，会被热切换更新）
+        db.save_live_backup("claude", "{\"env\":{}}")
+            .await
+            .expect("seed live backup");
+
+        service
+            .switch_proxy_target("claude", "b")
+            .await
+            .expect("switch proxy target");
+
+        // 断言：本地 settings 的 current provider 已同步
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("b")
+        );
+
+        // 断言：Live 备份已更新为目标供应商配置（用于 stop_with_restore 恢复）
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
+        assert_eq!(backup.original_config, expected);
     }
 }

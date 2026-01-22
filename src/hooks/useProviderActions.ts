@@ -54,7 +54,7 @@ export function useProviderActions(activeApp: AppId) {
 
   // 添加供应商
   const addProvider = useCallback(
-    async (provider: Omit<Provider, "id">) => {
+    async (provider: Omit<Provider, "id"> & { providerKey?: string }) => {
       await addProviderMutation.mutateAsync(provider);
     },
     [addProviderMutation],
@@ -114,6 +114,11 @@ export function useProviderActions(activeApp: AppId) {
         await providersApi.update(updatedProvider, activeApp);
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
+        });
+        // 🔧 保存用量脚本后，也应该失效该 provider 的用量查询缓存
+        // 这样主页列表会使用新配置重新查询，而不是使用测试时的缓存
+        await queryClient.invalidateQueries({
+          queryKey: ["usage", provider.id, activeApp],
         });
         toast.success(
           t("provider.usageSaved", {

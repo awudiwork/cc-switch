@@ -11,14 +11,14 @@ import {
   // Bot, // TODO: Agents 功能开发中，暂时不需要
   Book,
   Wrench,
-  Server,
   RefreshCw,
   Search,
   Download,
+  BarChart2,
 } from "lucide-react";
-import type { Provider } from "@/types";
+import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
-import { useProvidersQuery } from "@/lib/query";
+import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
@@ -30,7 +30,9 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
+import { isWindows, isLinux } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -38,9 +40,9 @@ import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
-import { BackupStatus } from "@/components/BackupStatus";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
+import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -49,6 +51,7 @@ import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
+import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 
 type View =
@@ -61,7 +64,8 @@ type View =
   | "agents"
   | "universal";
 
-const DRAG_BAR_HEIGHT = 28; // px
+// macOS Overlay mode needs space for traffic light buttons, Windows/Linux use native titlebar
+const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
 
@@ -74,9 +78,38 @@ function App() {
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
 
+  // Get settings for visibleApps
+  const { data: settingsData } = useSettingsQuery();
+  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
+    claude: true,
+    codex: true,
+    gemini: true,
+    opencode: true,
+  };
+
+  // Get first visible app for fallback
+  const getFirstVisibleApp = (): AppId => {
+    if (visibleApps.claude) return "claude";
+    if (visibleApps.codex) return "codex";
+    if (visibleApps.gemini) return "gemini";
+    if (visibleApps.opencode) return "opencode";
+    return "claude"; // fallback
+  };
+
+  // If current active app is hidden, switch to first visible app
+  useEffect(() => {
+    if (!visibleApps[activeApp]) {
+      setActiveApp(getFirstVisibleApp());
+    }
+  }, [visibleApps, activeApp]);
+
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Provider | null>(null);
+  // Confirm action state: 'remove' = remove from live config, 'delete' = delete from database
+  const [confirmAction, setConfirmAction] = useState<{
+    provider: Provider;
+    action: "remove" | "delete";
+  } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
@@ -286,18 +319,40 @@ function App() {
     checkEnvOnSwitch();
   }, [activeApp]);
 
+  // 全局键盘快捷键
+  const currentViewRef = useRef(currentView);
+
   useEffect(() => {
-    const handleGlobalShortcut = (event: KeyboardEvent) => {
-      if (event.key !== "," || !(event.metaKey || event.ctrlKey)) {
+    currentViewRef.current = currentView;
+  }, [currentView]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Cmd/Ctrl + , 打开设置
+      if (event.key === "," && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setCurrentView("settings");
         return;
       }
+
+      // ESC 键返回
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+
+      // 如果有模态框打开（通过 overflow hidden 判断），则不处理全局 ESC，交给模态框处理
+      if (document.body.style.overflow === "hidden") return;
+
+      const view = currentViewRef.current;
+      if (view === "providers") return;
+
+      if (isTextEditableTarget(event.target)) return;
+
       event.preventDefault();
-      setCurrentView("settings");
+      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
     };
 
-    window.addEventListener("keydown", handleGlobalShortcut);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleGlobalShortcut);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -321,11 +376,49 @@ function App() {
     setEditingProvider(null);
   };
 
-  // 确认删除供应商
-  const handleConfirmDelete = async () => {
-    if (!confirmDelete) return;
-    await deleteProvider(confirmDelete.id);
-    setConfirmDelete(null);
+  // 确认删除/移除供应商
+  const handleConfirmAction = async () => {
+    if (!confirmAction) return;
+    const { provider, action } = confirmAction;
+
+    if (action === "remove") {
+      // Remove from live config only (for additive mode apps like OpenCode)
+      // Does NOT delete from database - provider remains in the list
+      await providersApi.removeFromLiveConfig(provider.id, activeApp);
+      // Invalidate queries to refresh the isInConfig state
+      await queryClient.invalidateQueries({
+        queryKey: ["opencodeLiveProviderIds"],
+      });
+      toast.success(
+        t("notifications.removeFromConfigSuccess", {
+          defaultValue: "已从配置移除",
+        }),
+        { closeButton: true },
+      );
+    } else {
+      // Delete from database
+      await deleteProvider(provider.id);
+    }
+    setConfirmAction(null);
+  };
+
+  // Generate a unique provider key for OpenCode duplication
+  const generateUniqueOpencodeKey = (
+    originalKey: string,
+    existingKeys: string[],
+  ): string => {
+    const baseKey = `${originalKey}-copy`;
+
+    if (!existingKeys.includes(baseKey)) {
+      return baseKey;
+    }
+
+    // If -copy already exists, try -copy-2, -copy-3, ...
+    let counter = 2;
+    while (existingKeys.includes(`${baseKey}-${counter}`)) {
+      counter++;
+    }
+    return `${baseKey}-${counter}`;
   };
 
   // 复制供应商
@@ -334,7 +427,9 @@ function App() {
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
 
-    const duplicatedProvider: Omit<Provider, "id" | "createdAt"> = {
+    const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
+      providerKey?: string;
+    } = {
       name: `${provider.name} copy`,
       settingsConfig: JSON.parse(JSON.stringify(provider.settingsConfig)), // 深拷贝
       websiteUrl: provider.websiteUrl,
@@ -346,6 +441,15 @@ function App() {
       icon: provider.icon,
       iconColor: provider.iconColor,
     };
+
+    // OpenCode: generate unique provider key (used as ID)
+    if (activeApp === "opencode") {
+      const existingKeys = Object.keys(providers);
+      duplicatedProvider.providerKey = generateUniqueOpencodeKey(
+        provider.id,
+        existingKeys,
+      );
+    }
 
     // 2️⃣ 如果原供应商有 sortIndex，需要将后续所有供应商的 sortIndex +1
     if (provider.sortIndex !== undefined) {
@@ -379,6 +483,26 @@ function App() {
 
     // 3️⃣ 添加复制的供应商
     await addProvider(duplicatedProvider);
+  };
+
+  // 打开提供商终端
+  const handleOpenTerminal = async (provider: Provider) => {
+    try {
+      await providersApi.openTerminal(provider.id, activeApp);
+      toast.success(
+        t("provider.terminalOpened", {
+          defaultValue: "终端已打开",
+        }),
+      );
+    } catch (error) {
+      console.error("[App] Failed to open terminal", error);
+      const errorMessage = extractErrorMessage(error);
+      toast.error(
+        t("provider.terminalOpenFailed", {
+          defaultValue: "打开终端失败",
+        }) + (errorMessage ? `: ${errorMessage}` : ""),
+      );
+    }
   };
 
   // 导入配置成功后刷新
@@ -433,7 +557,12 @@ function App() {
             />
           );
         case "skillsDiscovery":
-          return <SkillsPage ref={skillsPageRef} initialApp={activeApp} />;
+          return (
+            <SkillsPage
+              ref={skillsPageRef}
+              initialApp={activeApp === "opencode" ? "claude" : activeApp}
+            />
+          );
         case "mcp":
           return (
             <UnifiedMcpPanel
@@ -447,13 +576,13 @@ function App() {
           );
         case "universal":
           return (
-            <div className="mx-auto max-w-[56rem] px-5 pt-4">
+            <div className="px-6 pt-4">
               <UniversalProviderPanel />
             </div>
           );
         default:
           return (
-            <div className="mx-auto max-w-[56rem] px-5 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
+            <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden">
               {/* 独立滚动容器 - 解决 Linux/Ubuntu 下 DndContext 与滚轮事件冲突 */}
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
                 <AnimatePresence mode="wait">
@@ -477,10 +606,21 @@ function App() {
                       activeProviderId={activeProviderId}
                       onSwitch={switchProvider}
                       onEdit={setEditingProvider}
-                      onDelete={setConfirmDelete}
+                      onDelete={(provider) =>
+                        setConfirmAction({ provider, action: "delete" })
+                      }
+                      onRemoveFromConfig={
+                        activeApp === "opencode"
+                          ? (provider) =>
+                              setConfirmAction({ provider, action: "remove" })
+                          : undefined
+                      }
                       onDuplicate={handleDuplicateProvider}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
+                      onOpenTerminal={
+                        activeApp === "claude" ? handleOpenTerminal : undefined
+                      }
                       onCreate={() => setIsAddOpen(true)}
                     />
                   </motion.div>
@@ -556,7 +696,7 @@ function App() {
         }
       >
         <div
-          className="mx-auto flex h-full max-w-[56rem] items-center justify-between gap-2 px-6"
+          className="mx-auto flex h-full max-w-[56rem] items-center justify-between gap-2 px-4"
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as any}
         >
@@ -595,14 +735,14 @@ function App() {
                 </h1>
               </div>
             ) : (
-              <>
-                <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
+                <div className="relative inline-flex items-center">
                   <a
                     href="https://github.com/farion1231/cc-switch"
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
-                      "text-lg font-semibold transition-colors whitespace-nowrap",
+                      "text-xl font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
@@ -610,20 +750,43 @@ function App() {
                   >
                     CC Switch
                   </a>
+                  <UpdateBadge
+                    onClick={() => {
+                      setSettingsDefaultTab("about");
+                      setCurrentView("settings");
+                    }}
+                    className="absolute -top-4 -right-4"
+                  />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setSettingsDefaultTab("general");
+                    setCurrentView("settings");
+                  }}
+                  title={t("common.settings")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Settings className="w-4 h-4" />
+                </Button>
+                {isCurrentAppTakeoverActive && (
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => {
-                      setSettingsDefaultTab("general");
+                      setSettingsDefaultTab("usage");
                       setCurrentView("settings");
                     }}
-                    title={t("common.settings")}
-                    className="hover:bg-black/5 dark:hover:bg-white/5 h-8 w-8"
+                    title={t("settings.usage.title", {
+                      defaultValue: "使用统计",
+                    })}
+                    className="hover:bg-black/5 dark:hover:bg-white/5"
                   >
-                    <Settings className="w-4 h-4" />
+                    <BarChart2 className="w-4 h-4" />
                   </Button>
-                </div>
-              </>
+                )}
+              </div>
             )}
           </div>
 
@@ -631,17 +794,6 @@ function App() {
             className="flex items-center gap-1.5 h-[32px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
-            {currentView === "providers" && (
-              <>
-                <BackupStatus />
-                <UpdateBadge
-                  onClick={() => {
-                    setSettingsDefaultTab("about");
-                    setCurrentView("settings");
-                  }}
-                />
-              </>
-            )}
             {currentView === "prompts" && (
               <Button
                 variant="ghost"
@@ -721,9 +873,31 @@ function App() {
             )}
             {currentView === "providers" && (
               <>
-                <ProxyToggle activeApp={activeApp} />
+                {activeApp !== "opencode" && (
+                  <>
+                    <ProxyToggle activeApp={activeApp} />
+                    <div
+                      className={cn(
+                        "transition-all duration-300 ease-in-out overflow-hidden",
+                        isCurrentAppTakeoverActive
+                          ? "opacity-100 max-w-[100px] scale-100"
+                          : "opacity-0 max-w-0 scale-75 pointer-events-none",
+                      )}
+                    >
+                      <FailoverToggle activeApp={activeApp} />
+                    </div>
+                  </>
+                )}
 
-                <AppSwitcher activeApp={activeApp} onSwitch={setActiveApp} />
+                <AppSwitcher
+                  activeApp={activeApp}
+                  onSwitch={setActiveApp}
+                  visibleApps={visibleApps}
+                  compact={
+                    isCurrentAppTakeoverActive &&
+                    Object.values(visibleApps).filter(Boolean).length >= 3
+                  }
+                />
 
                 <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                   <Button
@@ -769,7 +943,7 @@ function App() {
                     className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
                     title={t("mcp.title")}
                   >
-                    <Server className="w-4 h-4" />
+                    <McpIcon size={16} />
                   </Button>
                 </div>
 
@@ -812,6 +986,7 @@ function App() {
 
       {effectiveUsageProvider && (
         <UsageScriptModal
+          key={effectiveUsageProvider.id}
           provider={effectiveUsageProvider}
           appId={activeApp}
           isOpen={Boolean(usageProvider)}
@@ -825,17 +1000,25 @@ function App() {
       )}
 
       <ConfirmDialog
-        isOpen={Boolean(confirmDelete)}
-        title={t("confirm.deleteProvider")}
+        isOpen={Boolean(confirmAction)}
+        title={
+          confirmAction?.action === "remove"
+            ? t("confirm.removeProvider")
+            : t("confirm.deleteProvider")
+        }
         message={
-          confirmDelete
-            ? t("confirm.deleteProviderMessage", {
-                name: confirmDelete.name,
-              })
+          confirmAction
+            ? confirmAction.action === "remove"
+              ? t("confirm.removeProviderMessage", {
+                  name: confirmAction.provider.name,
+                })
+              : t("confirm.deleteProviderMessage", {
+                  name: confirmAction.provider.name,
+                })
             : ""
         }
-        onConfirm={() => void handleConfirmDelete()}
-        onCancel={() => setConfirmDelete(null)}
+        onConfirm={() => void handleConfirmAction()}
+        onCancel={() => setConfirmAction(null)}
       />
 
       <DeepLinkImportDialog />

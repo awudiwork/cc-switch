@@ -9,6 +9,9 @@ import {
   Database,
   Server,
   ChevronDown,
+  Zap,
+  Globe,
+  ScrollText,
 } from "lucide-react";
 import * as AccordionPrimitive from "@radix-ui/react-accordion";
 import { toast } from "sonner";
@@ -31,15 +34,19 @@ import { settingsApi } from "@/lib/api";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
+import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { AboutSection } from "@/components/settings/AboutSection";
+import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ProxyPanel } from "@/components/proxy";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
+import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
@@ -198,7 +205,7 @@ export function SettingsPage({
   };
 
   return (
-    <div className="mx-auto max-w-[56rem] flex flex-col h-[calc(100vh-8rem)] overflow-hidden px-6">
+    <div className="flex flex-col h-[calc(100vh-8rem)] overflow-hidden px-6">
       {isBusy ? (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -234,6 +241,10 @@ export function SettingsPage({
                     onChange={(lang) => handleAutoSave({ language: lang })}
                   />
                   <ThemeSettings />
+                  <AppVisibilitySettings
+                    settings={settings}
+                    onChange={handleAutoSave}
+                  />
                   <WindowSettings
                     settings={settings}
                     onChange={handleAutoSave}
@@ -452,6 +463,28 @@ export function SettingsPage({
                     </AccordionItem>
 
                     <AccordionItem
+                      value="rectifier"
+                      className="rounded-xl glass-card overflow-hidden"
+                    >
+                      <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          <Zap className="h-5 w-5 text-purple-500" />
+                          <div className="text-left">
+                            <h3 className="text-base font-semibold">
+                              {t("settings.advanced.rectifier.title")}
+                            </h3>
+                            <p className="text-sm text-muted-foreground font-normal">
+                              {t("settings.advanced.rectifier.description")}
+                            </p>
+                          </div>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <RectifierConfigPanel />
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    <AccordionItem
                       value="test"
                       className="rounded-xl glass-card overflow-hidden"
                     >
@@ -496,6 +529,28 @@ export function SettingsPage({
                     </AccordionItem>
 
                     <AccordionItem
+                      value="globalProxy"
+                      className="rounded-xl glass-card overflow-hidden"
+                    >
+                      <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          <Globe className="h-5 w-5 text-cyan-500" />
+                          <div className="text-left">
+                            <h3 className="text-base font-semibold">
+                              {t("settings.advanced.globalProxy.title")}
+                            </h3>
+                            <p className="text-sm text-muted-foreground font-normal">
+                              {t("settings.advanced.globalProxy.description")}
+                            </p>
+                          </div>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <GlobalProxySettings />
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    <AccordionItem
                       value="data"
                       className="rounded-xl glass-card overflow-hidden"
                     >
@@ -524,6 +579,28 @@ export function SettingsPage({
                           onExport={exportConfig}
                           onClear={clearSelection}
                         />
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    <AccordionItem
+                      value="logConfig"
+                      className="rounded-xl glass-card overflow-hidden"
+                    >
+                      <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          <ScrollText className="h-5 w-5 text-cyan-500" />
+                          <div className="text-left">
+                            <h3 className="text-base font-semibold">
+                              {t("settings.advanced.logConfig.title")}
+                            </h3>
+                            <p className="text-sm text-muted-foreground font-normal">
+                              {t("settings.advanced.logConfig.description")}
+                            </p>
+                          </div>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <LogConfigPanel />
                       </AccordionContent>
                     </AccordionItem>
                   </Accordion>

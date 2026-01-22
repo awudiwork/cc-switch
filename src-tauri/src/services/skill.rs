@@ -7,7 +7,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -129,6 +128,12 @@ impl Default for SkillStore {
                     branch: "master".to_string(),
                     enabled: true,
                 },
+                SkillRepo {
+                    owner: "JimLiu".to_string(),
+                    name: "baoyu-skills".to_string(),
+                    branch: "main".to_string(),
+                    enabled: true,
+                },
             ],
         }
     }
@@ -143,9 +148,7 @@ pub struct SkillMetadata {
 
 // ========== SkillService ==========
 
-pub struct SkillService {
-    http_client: Client,
-}
+pub struct SkillService;
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -155,13 +158,7 @@ impl Default for SkillService {
 
 impl SkillService {
     pub fn new() -> Self {
-        Self {
-            http_client: Client::builder()
-                .user_agent("cc-switch")
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("Failed to create HTTP client"),
-        }
+        Self
     }
 
     // ========== 路径管理 ==========
@@ -192,6 +189,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::OpenCode => {
+                if let Some(custom) = crate::settings::get_opencode_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置
@@ -205,6 +207,7 @@ impl SkillService {
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
+            AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
         })
     }
 
@@ -326,7 +329,12 @@ impl SkillService {
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
         // 从所有应用目录删除
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             let _ = Self::remove_from_app(&skill.directory, &app);
         }
 
@@ -385,7 +393,12 @@ impl SkillService {
 
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             let app_dir = match Self::get_app_skills_dir(&app) {
                 Ok(d) => d,
                 Err(_) => continue,
@@ -434,6 +447,7 @@ impl SkillService {
                     AppType::Claude => "claude",
                     AppType::Codex => "codex",
                     AppType::Gemini => "gemini",
+                    AppType::OpenCode => "opencode",
                 };
 
                 unmanaged
@@ -466,7 +480,12 @@ impl SkillService {
             let mut source_path: Option<PathBuf> = None;
             let mut found_in: Vec<String> = Vec::new();
 
-            for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+            for app in [
+                AppType::Claude,
+                AppType::Codex,
+                AppType::Gemini,
+                AppType::OpenCode,
+            ] {
                 if let Ok(app_dir) = Self::get_app_skills_dir(&app) {
                     let skill_path = app_dir.join(&dir_name);
                     if skill_path.exists() {
@@ -477,6 +496,7 @@ impl SkillService {
                             AppType::Claude => "claude",
                             AppType::Codex => "codex",
                             AppType::Gemini => "gemini",
+                            AppType::OpenCode => "opencode",
                         };
                         found_in.push(app_str.to_string());
                     }
@@ -515,6 +535,7 @@ impl SkillService {
                     "claude" => apps.claude = true,
                     "codex" => apps.codex = true,
                     "gemini" => apps.gemini = true,
+                    "opencode" => apps.opencode = true,
                     _ => {}
                 }
             }
@@ -863,7 +884,8 @@ impl SkillService {
 
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
-        let response = self.http_client.get(url).send().await?;
+        let client = crate::proxy::http_client::get();
+        let response = client.get(url).send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -984,7 +1006,12 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     let mut discovered: HashMap<String, SkillApps> = HashMap::new();
 
     // 扫描各应用目录
-    for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+    for app in [
+        AppType::Claude,
+        AppType::Codex,
+        AppType::Gemini,
+        AppType::OpenCode,
+    ] {
         let app_dir = match SkillService::get_app_skills_dir(&app) {
             Ok(d) => d,
             Err(_) => continue,
