@@ -1043,8 +1043,32 @@ pub fn run() {
 /// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
 /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
 /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
+/// 同时在退出前自动创建数据库备份。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
+        // 1. 创建数据库备份
+        log::info!("应用退出前创建数据库备份...");
+        let db = state.db.clone();
+        let backup_result = tauri::async_runtime::spawn_blocking(move || {
+            db.backup_database_on_exit()
+        }).await;
+
+        match backup_result {
+            Ok(Ok(Some(path))) => {
+                log::info!("数据库备份成功: {}", path.display());
+            }
+            Ok(Ok(None)) => {
+                log::info!("数据库不存在，跳过备份");
+            }
+            Ok(Err(e)) => {
+                log::error!("数据库备份失败: {}", e);
+            }
+            Err(e) => {
+                log::error!("数据库备份任务失败: {}", e);
+            }
+        }
+
+        // 2. 清理代理服务
         let proxy_service = &state.proxy_service;
 
         // 退出时也需要兜底：代理可能已崩溃/未运行，但 Live 接管残留仍在（占位符/备份）。

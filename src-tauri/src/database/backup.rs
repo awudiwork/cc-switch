@@ -109,6 +109,11 @@ impl Database {
         ))
     }
 
+    /// 应用退出时创建数据库备份（公共方法）
+    pub fn backup_database_on_exit(&self) -> Result<Option<PathBuf>, AppError> {
+        self.backup_database_file()
+    }
+
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");

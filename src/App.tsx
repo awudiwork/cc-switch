@@ -771,6 +771,7 @@ function App() {
                 >
                   <Settings className="w-4 h-4" />
                 </Button>
+                <BackupStatus />
                 {isCurrentAppTakeoverActive && (
                   <Button
                     variant="ghost"
@@ -795,18 +796,6 @@ function App() {
             className="flex items-center gap-1.5 h-[32px]"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
-            {currentView === "providers" && (
-              <>
-                <BackupStatus />
-                <UpdateBadge
-                  onClick={() => {
-                    setSettingsDefaultTab("about");
-                    setCurrentView("settings");
-                  }}
-                  className="absolute -top-4 -right-4"
-                />
-              </>
-            )}
             {currentView === "prompts" && (
               <Button
                 variant="ghost"
