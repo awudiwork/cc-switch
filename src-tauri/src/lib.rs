@@ -833,7 +833,6 @@ pub fn run() {
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::sync_current_providers_live,
-            commands::get_backup_info,
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,
@@ -1043,7 +1042,6 @@ pub fn run() {
 /// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
 /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
 /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
-/// 同时在退出前自动创建数据库备份。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         // 1. 创建数据库备份
